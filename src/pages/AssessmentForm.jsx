@@ -25,7 +25,6 @@ import {
 import PhotoCapture from '../components/PhotoCapture'
 import QuickFixForm, { clearQuickFixDraft } from './QuickFixForm'
 
-const RESULT_OPTIONS = ['pass', 'monitor', 'fail_critical', 'replaced', 'na']
 
 // Draft storage. Keyed by appointment id (collision-proof — mg-fms used
 // `plate|date` which broke if the same plate was inspected twice in one day).
@@ -460,15 +459,14 @@ export default function AssessmentForm() {
             : 'No items to rate for this type.'}
         </div>
       ) : (
-        <div className="mx-3 sm:mx-4 space-y-2">
+        <div className="mx-3 sm:mx-4 space-y-3">
           {activeCategories.map((cat, idx) => (
             <CategoryBlock
               key={cat.code}
               cat={cat}
-              stepIndex={idx + 1}
-              stepCount={activeCategories.length}
               open={openCat === cat.code}
               onToggle={() => setOpenCat(openCat === cat.code ? null : cat.code)}
+              onComplete={idx < activeCategories.length - 1 ? () => setOpenCat(activeCategories[idx + 1].code) : null}
               itemResults={itemResults}
               setResult={setResult}
             />
@@ -635,169 +633,298 @@ function timeAgo(ts) {
   return `${Math.floor(h / 24)}d ago`
 }
 
-function CategoryBlock({ cat, stepIndex, stepCount, open, onToggle, itemResults, setResult }) {
+// Port of mg-fms-app CatCard (App.jsx:250) — color-coded progress bar, chip
+// counts, mark-all-pass CTA, next-category CTA, all-done green tint.
+function CategoryBlock({ cat, open, onToggle, onComplete, itemResults, setResult }) {
+  const total = cat.items.length
+  const done = cat.items.filter((i) => itemResults[i.code]?.resultCode).length
   const fails = cat.items.filter((i) => itemResults[i.code]?.resultCode === 'fail_critical').length
   const mons = cat.items.filter((i) => itemResults[i.code]?.resultCode === 'monitor').length
-  const answered = cat.items.filter((i) => itemResults[i.code]?.resultCode).length
-  const complete = answered === cat.items.length && cat.items.length > 0
+  const replaced = cat.items.filter((i) => itemResults[i.code]?.resultCode === 'replaced').length
+  const pct = total ? Math.round((done / total) * 100) : 0
+  const bar = fails > 0 ? 'bg-red-500' : mons > 0 ? 'bg-amber-500' : done === total && total > 0 ? 'bg-green-500' : 'bg-gray-300'
+  const allDone = done === total && total > 0
+  const allClear = allDone && fails === 0 && mons === 0
+
+  // Mark every unrated item in this category as Pass — the "you know the rest
+  // are fine, don't make me tap 30 times" escape hatch. Matches mg-fms
+  // quickPassAll (CatCard).
+  const markAllPass = () => {
+    for (const item of cat.items) {
+      if (!itemResults[item.code]?.resultCode) {
+        setResult(item.code, {
+          resultCode: 'pass',
+          defectCode: null,
+          partReplaced: null,
+          partQty: null,
+          afterMeasure: null,
+          note: null,
+          photos: null,
+        })
+      }
+    }
+  }
+
   return (
-    <div className="bg-white border rounded-xl overflow-hidden">
+    <div className={`rounded-2xl border-2 overflow-hidden transition-all ${allClear ? 'border-green-200 bg-green-50/30' : 'bg-white border-gray-200'}`}>
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50"
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-black/5"
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ${
-            complete ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 border'
-          }`}>
-            {complete ? '✓' : stepIndex}
-          </span>
-          <span className="text-lg shrink-0">{cat.icon}</span>
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wider text-gray-400 leading-none">
-              Step {stepIndex} of {stepCount}
-            </div>
-            <div className="font-semibold text-sm text-gray-800 truncate">
-              {cat.label} <span className="text-xs text-gray-400 font-normal">({answered}/{cat.items.length})</span>
+        <span className="text-xl shrink-0">{allClear ? '✅' : cat.icon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-gray-800 text-sm truncate">{cat.label}</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {fails > 0 && <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">{fails}✕</span>}
+              {mons > 0 && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">{mons}⚠</span>}
+              {replaced > 0 && <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{replaced}🔩</span>}
+              <span className="text-[11px] text-gray-400">{done}/{total}</span>
+              <span className="text-gray-300 text-xs">{open ? '▲' : '▼'}</span>
             </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs shrink-0">
-          {fails > 0 && <span className="text-red-600 font-bold">🚨 {fails}</span>}
-          {mons > 0 && <span className="text-amber-600 font-bold">⚠ {mons}</span>}
-          <span className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+          <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full transition-all ${bar}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="text-[10px] text-gray-400">{pct}%</span>
+          </div>
         </div>
       </button>
       {open && (
-        <div className="border-t divide-y">
+        <div className="px-3 sm:px-4 pb-4 border-t border-gray-100 pt-3 space-y-3">
           {cat.items.map((item) => (
             <ItemRow key={item.code} item={item} result={itemResults[item.code] || {}} setResult={setResult} />
           ))}
+          {done < total && (
+            <button
+              type="button"
+              onClick={markAllPass}
+              className="w-full py-3 border-2 border-dashed border-green-400 text-green-700 rounded-xl font-bold text-sm hover:bg-green-50 active:scale-95 transition-all flex items-center justify-center gap-2"
+            >
+              ✓ Mark all remaining as Pass ({total - done} item{total - done === 1 ? '' : 's'})
+            </button>
+          )}
+          {allDone && onComplete && (
+            <button
+              type="button"
+              onClick={onComplete}
+              className="w-full py-3 bg-gray-800 text-white rounded-xl font-bold text-sm active:scale-95 flex items-center justify-center gap-2"
+            >
+              Next Category →
+            </button>
+          )}
         </div>
       )}
     </div>
   )
 }
 
+// Port of mg-fms-app InspItem (App.jsx:208). Faithful visual + behavioral
+// parity: tap-to-clear results, auto-classify measurables, color-coded
+// borders, HOLD/CRIT/LTO chips, tappable defect chips, replacement details
+// card, photos on any flagged item, per-item note.
 function ItemRow({ item, result, setResult }) {
-  const action = getAction(item, result.resultCode)
-  const actionCfg = ACTION_CFG[action]
-  const showDefect = result.resultCode === 'fail_critical' || result.resultCode === 'monitor'
-  const showMeasure = item.type === 'measurable'
-  const showPart = result.resultCode === 'replaced'
+  const v = result || {}
+  const isReplaced = v.resultCode === 'replaced'
+  const isFailOrMonitor = v.resultCode === 'fail_critical' || v.resultCode === 'monitor'
+  const showDefectBlock = isFailOrMonitor || isReplaced
+  const action = getAction(item, v.resultCode)
+  const actCfg = ACTION_CFG[action]
+
+  // Tap a result button: toggles. Tap the already-active button to clear.
+  // When the new result is "cleared" (pass / na / toggle-off), any captured
+  // defect/part/after/note/photos get wiped — mirrors mg-fms InspItem.
+  const setCode = (code) => {
+    const same = code === v.resultCode
+    const clear = same || code === 'pass' || code === 'na'
+    setResult(item.code, {
+      resultCode: same ? null : code,
+      defectCode: clear ? null : v.defectCode,
+      partReplaced: clear ? null : v.partReplaced,
+      partQty: clear ? null : v.partQty,
+      afterMeasure: clear ? null : v.afterMeasure,
+      note: clear ? null : v.note,
+      photos: clear ? null : v.photos,
+    })
+  }
+
+  // Measurable "Before" input — auto-classifies against the threshold.
+  // Empty clears the result; below threshold → fail_critical; at/above → pass.
+  const setMeasure = (val) => {
+    const auto = val !== ''
+      ? (parseFloat(val) < item.threshold ? 'fail_critical' : 'pass')
+      : null
+    setResult(item.code, { measuredValue: val, resultCode: auto })
+  }
+
+  const setPhotos = (photos) => setResult(item.code, { photos })
+
+  const border =
+    v.resultCode === 'fail_critical' ? 'border-red-400 bg-red-50' :
+    v.resultCode === 'monitor'       ? 'border-amber-400 bg-amber-50' :
+    v.resultCode === 'replaced'      ? 'border-blue-400 bg-blue-50' :
+    v.resultCode === 'pass'          ? 'border-green-400 bg-green-50' :
+    v.resultCode === 'na'            ? 'border-gray-300 bg-gray-50' :
+                                       'border-gray-200 bg-white'
 
   return (
-    <div className="px-3 sm:px-4 py-3">
-      {/* Mobile (<lg): stacked — label on top, result buttons wrap below.
-          Desktop (lg+): side-by-side like before, label left, buttons right. */}
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between lg:gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-gray-800 break-words">
-            {item.label}
-            {item.isCritical && <span className="ml-1.5 text-[10px] text-red-600 font-bold">CRITICAL</span>}
-            {item.holdUnit && <span className="ml-1.5 text-[10px] text-red-900 font-bold">HOLD</span>}
-            {item.isCompliance && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">COMPLIANCE</span>}
+    <div className={`rounded-2xl border-2 overflow-hidden transition-all ${border}`}>
+      <div className="px-4 pt-3 pb-2.5">
+        <div className="flex items-start gap-2 mb-2">
+          <span className="font-semibold text-gray-800 text-sm leading-snug flex-1 break-words">{item.label}</span>
+          <div className="flex gap-1 shrink-0">
+            {item.holdUnit && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-md font-bold">HOLD</span>}
+            {item.isCritical && !item.holdUnit && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-md font-bold">CRIT</span>}
+            {item.isCompliance && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-md font-bold">LTO</span>}
           </div>
-          {item.thresholdLabel && (
-            <div className="text-[11px] text-gray-500 mt-0.5">{item.thresholdLabel}</div>
-          )}
         </div>
-        <div className="mt-2 lg:mt-0 grid grid-cols-5 gap-1 lg:flex lg:flex-wrap lg:justify-end lg:gap-1">
-          {RESULT_OPTIONS.map((rc) => {
-            const active = result.resultCode === rc
-            const cfg = RC[rc]
+
+        {/* Measurable Before input — inline with unit + threshold + auto-classified result pill */}
+        {item.type === 'measurable' && (
+          <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+            <div className="flex flex-col items-center">
+              <span className="text-[10px] text-gray-400 mb-0.5">Before</span>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                value={v.measuredValue ?? ''}
+                onChange={(e) => setMeasure(e.target.value)}
+                className="w-20 border-2 border-gray-200 focus:border-blue-500 rounded-xl px-2 py-2 text-sm font-bold text-center focus:outline-none bg-white"
+              />
+            </div>
+            <span className="text-xs text-gray-400 mt-4">{item.unit}</span>
+            {item.thresholdLabel && <span className="text-[11px] text-gray-400 italic mt-4">{item.thresholdLabel}</span>}
+            {v.resultCode && v.resultCode !== 'replaced' && (
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full mt-4 ${RC[v.resultCode]?.light}`}>
+                {RC[v.resultCode]?.label}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 5-button grid: icon above label, tap active to clear */}
+        <div className="grid grid-cols-5 gap-1.5">
+          {['pass', 'monitor', 'fail_critical', 'replaced', 'na'].map((code) => {
+            const active = v.resultCode === code
+            const cfg = RC[code]
             return (
               <button
-                key={rc}
+                key={code}
                 type="button"
-                onClick={() => setResult(item.code, { resultCode: active ? undefined : rc })}
-                className={`text-[10px] sm:text-[11px] px-1 sm:px-2 py-2 sm:py-1 rounded-lg lg:rounded font-bold transition leading-tight text-center ${active ? `${cfg.bg} text-white` : `${cfg.light} hover:opacity-80`}`}
+                onClick={() => setCode(code)}
+                className={`py-2.5 rounded-xl font-bold text-xs transition-all active:scale-95 ${active ? `${cfg.bg} text-white shadow-md` : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
               >
-                <span className="block lg:inline">{cfg.icon}</span>
-                <span className="block lg:inline lg:ml-0.5">{cfg.label}</span>
+                <div className="text-base leading-none">{cfg.icon}</div>
+                <div className="mt-0.5 leading-none" style={{ fontSize: '10px' }}>{cfg.label}</div>
               </button>
             )
           })}
         </div>
+
+        {/* Action chip — "Monitor", "Repair Required", "Hold Unit", etc. */}
+        {v.resultCode && action !== 'NONE' && (
+          <div className={`mt-2 inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${actCfg.bg} ${actCfg.color}`}>
+            {actCfg.label}
+          </div>
+        )}
+        {isReplaced && (
+          <div className="mt-2 ml-1 inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-100 text-blue-700">
+            🔩 Replaced on-site — resolved
+          </div>
+        )}
       </div>
 
-      {(showDefect || showMeasure || showPart) && (
-        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-          {showMeasure && (
-            <label className="block">
-              <span className="block text-[10px] font-medium text-gray-500 mb-0.5">
-                Measured {item.unit ? `(${item.unit})` : ''}
-              </span>
-              <input
-                type="number"
-                step="0.01"
-                value={result.measuredValue ?? ''}
-                onChange={(e) => setResult(item.code, { measuredValue: e.target.value })}
-                className="input w-full"
-                placeholder={item.threshold != null ? `min ${item.threshold}` : ''}
-              />
-            </label>
-          )}
-          {showDefect && (
-            <label className="block">
-              <span className="block text-[10px] font-medium text-gray-500 mb-0.5">Defect</span>
-              <select
-                value={result.defectCode || ''}
-                onChange={(e) => setResult(item.code, { defectCode: e.target.value || undefined })}
-                className="input w-full"
-              >
-                <option value="">— select —</option>
-                {Object.entries(DEFECT_CODES).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
+      {/* Expanded block — defect chips, replacement details, photos, note. */}
+      {showDefectBlock && (
+        <div className="px-4 pb-4 pt-2 border-t border-dashed border-gray-300 space-y-3">
+          {Array.isArray(item.defects) && item.defects.length > 0 && (
+            <div>
+              <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">
+                {isReplaced ? 'Defect Found (Before Replacement)' : 'Defect Type'}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {item.defects.map((dc) => (
+                  <button
+                    key={dc}
+                    type="button"
+                    onClick={() => setResult(item.code, { defectCode: v.defectCode === dc ? null : dc })}
+                    className={`text-[11px] px-2.5 py-1 rounded-full border font-medium transition-all ${
+                      v.defectCode === dc
+                        ? 'bg-red-600 text-white border-red-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-red-400'
+                    }`}
+                  >
+                    {DEFECT_CODES[dc] || dc}
+                  </button>
                 ))}
-              </select>
-            </label>
+              </div>
+            </div>
           )}
-          {showPart && (
-            <>
-              <label className="block">
-                <span className="block text-[10px] font-medium text-gray-500 mb-0.5">Part Replaced</span>
+
+          {isReplaced && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-3">
+              <div className="text-[11px] font-black text-blue-700 uppercase tracking-wide">🔩 Replacement Details</div>
+              <div>
+                <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Part / Material Replaced *</div>
                 <input
-                  value={result.partReplaced || ''}
+                  type="text"
+                  placeholder="e.g. Brake pad set (front), Engine oil filter…"
+                  value={v.partReplaced || ''}
                   onChange={(e) => setResult(item.code, { partReplaced: e.target.value })}
-                  className="input w-full"
-                  placeholder="Brand / description"
-                />
-              </label>
-              <label className="block">
-                <span className="block text-[10px] font-medium text-gray-500 mb-0.5">Qty</span>
-                <input
-                  type="number" min="1"
-                  value={result.partQty || 1}
-                  onChange={(e) => setResult(item.code, { partQty: Number(e.target.value) || 1 })}
-                  className="input w-full"
-                />
-              </label>
-              <div className="sm:col-span-2">
-                <PhotoCapture
-                  label="Photos (before / new part / after)"
-                  photos={result.photos || []}
-                  onChange={(next) => setResult(item.code, { photos: next })}
+                  className="w-full border-2 border-blue-200 focus:border-blue-500 rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none bg-white"
                 />
               </div>
-            </>
+              <div className="flex items-start gap-3 flex-wrap">
+                <div className="flex-1 min-w-[100px]">
+                  <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Quantity</div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => setResult(item.code, { partQty: Math.max(1, (v.partQty || 1) - 1) })} className="w-9 h-9 bg-white border-2 border-blue-200 rounded-lg font-black text-lg text-gray-600 flex items-center justify-center active:scale-95">−</button>
+                    <span className="text-lg font-black text-gray-800 w-10 text-center">{v.partQty || 1}</span>
+                    <button type="button" onClick={() => setResult(item.code, { partQty: (v.partQty || 1) + 1 })} className="w-9 h-9 bg-white border-2 border-blue-200 rounded-lg font-black text-lg text-gray-600 flex items-center justify-center active:scale-95">+</button>
+                  </div>
+                </div>
+                {item.type === 'measurable' && (
+                  <div className="flex-1 min-w-[140px]">
+                    <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">After ({item.unit})</div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={v.afterMeasure ?? ''}
+                        onChange={(e) => setResult(item.code, { afterMeasure: e.target.value })}
+                        className="w-24 border-2 border-blue-200 focus:border-blue-500 rounded-xl px-2 py-2 text-sm font-bold text-center focus:outline-none bg-white"
+                      />
+                      <span className="text-xs text-gray-400">{item.unit}</span>
+                      {v.afterMeasure && parseFloat(v.afterMeasure) >= item.threshold && <span className="text-[11px] font-bold text-green-600">✓ OK</span>}
+                      {v.afterMeasure && parseFloat(v.afterMeasure) < item.threshold && <span className="text-[11px] font-bold text-red-600">Still low</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-          <label className="block sm:col-span-2">
-            <span className="block text-[10px] font-medium text-gray-500 mb-0.5">Note</span>
-            <input
-              value={result.note || ''}
-              onChange={(e) => setResult(item.code, { note: e.target.value })}
-              className="input w-full"
-              placeholder="Optional remarks"
-            />
-          </label>
-        </div>
-      )}
 
-      {result.resultCode && action !== 'NONE' && (
-        <div className={`mt-2 inline-block text-[10px] font-semibold px-2 py-0.5 rounded ${actionCfg.bg} ${actionCfg.color}`}>
-          {actionCfg.label}
+          <div>
+            <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">
+              {isReplaced ? 'Photos (Before / After)' : 'Photos (max 3)'}
+            </div>
+            <PhotoCapture photos={v.photos || []} onChange={setPhotos} max={3} />
+          </div>
+
+          <div>
+            <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">Note</div>
+            <input
+              type="text"
+              placeholder={isReplaced ? 'e.g. Replaced during inspection, parts from stock…' : 'Add note (optional)…'}
+              value={v.note || ''}
+              onChange={(e) => setResult(item.code, { note: e.target.value })}
+              className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-blue-400 bg-white"
+            />
+          </div>
         </div>
       )}
     </div>
