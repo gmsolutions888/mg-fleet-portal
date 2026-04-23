@@ -160,6 +160,56 @@ export const CATEGORIES = [
 export const ALL_ITEMS = CATEGORIES.flatMap((c) => c.items)
 export const ITEM_MAP  = Object.fromEntries(ALL_ITEMS.map((i) => [i.code, i]))
 
+// ── Assessment types (ported from mg-fms-app/src/App.jsx:11) ───────────────
+// Same 4 values mg-fms writes to `header.type`. Keep labels identical so
+// both apps render the same badge text on the same records.
+export const ASSESS_TYPES = ['Initial', 'Periodic', 'Re-Assessment', 'Pre-Dispatch']
+
+// Pre-Dispatch inspections only cover safety-critical items — anything
+// flagged `holdUnit`, `isCritical`, or `isCompliance`. Everything else gets
+// auto-filled as N/A so the inspector isn't slowed down during a pre-trip
+// check. Port of mg-fms-app/src/App.jsx:179.
+export const PRE_DISPATCH_ITEMS = new Set(
+  ALL_ITEMS.filter((i) => i.holdUnit || i.isCritical || i.isCompliance).map((i) => i.code)
+)
+
+// Given an assessment type + (for Re-Assessment) the previous assessment,
+// return the set of item codes that need to be answered this pass. `null`
+// means "all items". Port of mg-fms-app/src/App.jsx:180.
+//
+//   Initial / Periodic → null  (all ALL_ITEMS)
+//   Pre-Dispatch       → PRE_DISPATCH_ITEMS
+//   Re-Assessment      → Set of items that were fail_critical or monitor in
+//                        the previous assessment
+export function getActiveItems(type, prevAssessment) {
+  if (type === 'Re-Assessment' && prevAssessment) {
+    const flagged = new Set()
+    for (const i of ALL_ITEMS) {
+      const r = prevAssessment.itemResults?.[i.code]
+      if (r?.resultCode === 'fail_critical' || r?.resultCode === 'monitor') flagged.add(i.code)
+    }
+    return flagged
+  }
+  if (type === 'Pre-Dispatch') return PRE_DISPATCH_ITEMS
+  return null
+}
+
+// For a history of assessments on one plate, tally how many times each item
+// came back fail_critical or monitor. Used by VehicleProfile / reports to
+// surface recurring defects. Port of mg-fms-app/src/App.jsx:185.
+export function getRepeatDefects(vehicleAssessments) {
+  const counts = {}
+  for (const a of vehicleAssessments || []) {
+    for (const item of ALL_ITEMS) {
+      const r = a.itemResults?.[item.code]
+      if (r?.resultCode === 'fail_critical' || r?.resultCode === 'monitor') {
+        counts[item.code] = (counts[item.code] || 0) + 1
+      }
+    }
+  }
+  return counts
+}
+
 // ── Status / result / action configs ─────────────────────────────────────
 export const SC = {
   active:      { label: 'ACTIVE / Roadworthy',        bg: 'bg-green-600',  badge: 'bg-green-100 text-green-800',  grad: 'from-green-700 to-green-600' },

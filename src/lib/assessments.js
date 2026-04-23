@@ -12,7 +12,10 @@
 //     FMS_KNOWN_ISSUES §1 flagged that NaN bypassed the original; this port
 //     coerces NaN to null too.
 
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore'
+import {
+  addDoc, collection, doc, getDoc, getDocs, orderBy, query,
+  serverTimestamp, updateDoc, where,
+} from 'firebase/firestore'
 import { auth, db } from './firebase'
 import { ALL_ITEMS } from './mgfms-catalog'
 import { emitNotification } from './notifications'
@@ -27,6 +30,75 @@ export async function getAssessmentById(id) {
   const snap = await getDoc(doc(db, 'assessments', id))
   if (!snap.exists()) return null
   return { _docId: snap.id, ...snap.data() }
+}
+
+// Latest assessment for a plate, ignoring resolved ones by default. Used by
+// Re-Assessment: we want to pre-fill from whatever the most recent inspection
+// said. Plates are normalized to uppercase no-space so queries match mg-fms's
+// write format.
+export async function getLatestAssessmentForPlate(plateRaw) {
+  if (!db || !plateRaw) return null
+  const plate = String(plateRaw).toUpperCase().replace(/\s+/g, '')
+  try {
+    // Fire one broad query (no composite index needed) and filter client-side.
+    // Plate counts are small enough per customer that this is fine.
+    const snap = await getDocs(query(collection(db, 'assessments'), orderBy('submittedAt', 'desc')))
+    for (const d of snap.docs) {
+      const data = d.data()
+      const p = String(data?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+      if (p === plate && !data.resolvedByRwa) return { _docId: d.id, ...data }
+    }
+    return null
+  } catch (err) {
+    console.warn('[assessments] getLatestAssessmentForPlate failed:', err?.message || err)
+    return null
+  }
+}
+
+// All outstanding (not-yet-resolved) deferred assessments for a plate. Used
+// when submitting a Re-Assessment that comes back active/conditional — we
+// stamp resolvedByRwa/resolvedAt on these so the fleet view stops flagging
+// them.
+export async function getOutstandingDeferredForPlate(plateRaw) {
+  if (!db || !plateRaw) return []
+  const plate = String(plateRaw).toUpperCase().replace(/\s+/g, '')
+  try {
+    const snap = await getDocs(query(collection(db, 'assessments'), orderBy('submittedAt', 'desc')))
+    const out = []
+    for (const d of snap.docs) {
+      const data = d.data()
+      const p = String(data?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+      if (p !== plate) continue
+      if (data.resolvedByRwa) continue
+      if (data?.classification?.overallStatus !== 'deferred') continue
+      out.push({ _docId: d.id, ...data })
+    }
+    return out
+  } catch (err) {
+    console.warn('[assessments] getOutstandingDeferredForPlate failed:', err?.message || err)
+    return []
+  }
+}
+
+// Stamp resolvedByRwa / resolvedAt onto a list of assessment docs. Returns
+// the count of writes that succeeded. Doesn't throw on individual failures —
+// we don't want one bad doc to block the main re-assessment submit.
+export async function markAssessmentsResolved(docs, byRwa, atIso) {
+  if (!db || !Array.isArray(docs) || docs.length === 0) return 0
+  let n = 0
+  for (const d of docs) {
+    if (!d?._docId) continue
+    try {
+      await updateDoc(doc(db, 'assessments', d._docId), {
+        resolvedByRwa: byRwa,
+        resolvedAt: atIso,
+      })
+      n++
+    } catch (err) {
+      console.warn('[assessments] resolve failed for', d.rwaNumber, err?.message || err)
+    }
+  }
+  return n
 }
 
 // ── sanitizer ────────────────────────────────────────────────────────────

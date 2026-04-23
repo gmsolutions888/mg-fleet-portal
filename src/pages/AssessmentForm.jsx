@@ -15,10 +15,13 @@ import { useAuth } from '../context/AuthContext'
 import { fetchContextDoc } from '../lib/notifications'
 import { watchVehicles } from '../lib/vehicles'
 import {
-  ACTION_CFG, CATEGORIES, DEFECT_CODES, RC, SC,
-  calcHealthScore, getAction, healthColor,
+  ACTION_CFG, ALL_ITEMS, ASSESS_TYPES, CATEGORIES, DEFECT_CODES, PRE_DISPATCH_ITEMS,
+  RC, SC, calcHealthScore, getAction, getActiveItems, healthColor,
 } from '../lib/mgfms-catalog'
-import { createAssessment, runEngine } from '../lib/assessments'
+import {
+  createAssessment, runEngine,
+  getLatestAssessmentForPlate,
+} from '../lib/assessments'
 import PhotoCapture from '../components/PhotoCapture'
 
 const RESULT_OPTIONS = ['pass', 'monitor', 'fail_critical', 'replaced', 'na']
@@ -72,7 +75,7 @@ export default function AssessmentForm() {
   const [header, setHeader] = useState(() => initialDraft?.header || {
     plate: '', make: '', model: '', yearModel: '',
     client: '', branch: '', technician: '', odometer: '',
-    type: 'New Assessment', date: new Date().toISOString().slice(0, 10),
+    type: 'Initial', date: new Date().toISOString().slice(0, 10),
   })
   const [itemResults, setItemResults] = useState(() => initialDraft?.itemResults || {})
   const [openCat, setOpenCat] = useState(CATEGORIES[0]?.code || null)
@@ -80,6 +83,17 @@ export default function AssessmentForm() {
   const [error, setError] = useState(null)
   const [draftSavedAt, setDraftSavedAt] = useState(initialDraft?.savedAt || null)
   const [draftRestored] = useState(Boolean(initialDraft))
+
+  // Re-Assessment state. When the user picks "Re-Assessment" as the type:
+  //   1. Fetch the most recent assessment for this plate (`prevAssessment`).
+  //   2. Show a mode chooser (Full Re-Assessment / Quick Fix).
+  //   3. Pre-fill non-flagged items from prevAssessment so only fail_critical
+  //      / monitor items need re-answering.
+  // Matches mg-fms-app/src/App.jsx (startReassess + screen="reassess-mode").
+  const [prevAssessment, setPrevAssessment] = useState(initialDraft?.prevAssessment || null)
+  const [prevLoading, setPrevLoading] = useState(false)
+  const [reassessMode, setReassessMode] = useState(initialDraft?.reassessMode || null)
+  const prefilledKeyRef = useRef('')
 
   // Load the parent appointment + vehicle registry in parallel. Only fires
   // once per appointmentId — `profile` is captured at first load so later
@@ -137,11 +151,77 @@ export default function AssessmentForm() {
     if (loading) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      saveDraft(appointmentId, { header, itemResults })
+      saveDraft(appointmentId, { header, itemResults, prevAssessment, reassessMode })
       setDraftSavedAt(Date.now())
     }, 600)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
-  }, [appointmentId, header, itemResults, loading])
+  }, [appointmentId, header, itemResults, prevAssessment, reassessMode, loading])
+
+  // When the type flips to Re-Assessment, fetch the latest unresolved
+  // assessment for this plate. If there isn't one, we can't do a proper
+  // Re-Assessment — warn the user and let them pick a different type.
+  useEffect(() => {
+    if (header.type !== 'Re-Assessment') {
+      setPrevAssessment(null)
+      setReassessMode(null)
+      return
+    }
+    if (!header.plate) return
+    // Skip if the draft already has the prev loaded for the same plate.
+    if (prevAssessment && prevAssessment?.header?.plate?.toUpperCase() === header.plate.toUpperCase()) return
+    let cancelled = false
+    setPrevLoading(true)
+    getLatestAssessmentForPlate(header.plate).then((prev) => {
+      if (cancelled) return
+      setPrevAssessment(prev || null)
+      setPrevLoading(false)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [header.type, header.plate])
+
+  // Compute the active item set for the current (type, prevAssessment) combo.
+  // `null` = all items active (Initial / Periodic). A Set = only those codes.
+  const activeItemSet = useMemo(
+    () => getActiveItems(header.type, prevAssessment),
+    [header.type, prevAssessment],
+  )
+
+  // Pre-fill logic matching mg-fms:
+  //   Pre-Dispatch: fill non-critical items as `na` so inspector sees fewer.
+  //   Re-Assessment: copy previous results for items that weren't flagged;
+  //                  flagged items stay blank so they must be re-rated.
+  // Runs once per (type × prevAssessment) change to avoid wiping edits.
+  useEffect(() => {
+    if (loading) return
+    const key = `${header.type}|${prevAssessment?._docId || prevAssessment?.id || ''}`
+    if (prefilledKeyRef.current === key) return
+    prefilledKeyRef.current = key
+
+    if (header.type === 'Pre-Dispatch') {
+      setItemResults((prev) => {
+        const next = { ...prev }
+        for (const i of ALL_ITEMS) {
+          if (!PRE_DISPATCH_ITEMS.has(i.code) && !next[i.code]?.resultCode) {
+            next[i.code] = { resultCode: 'na' }
+          }
+        }
+        return next
+      })
+    } else if (header.type === 'Re-Assessment' && prevAssessment) {
+      const flagged = activeItemSet instanceof Set ? activeItemSet : new Set()
+      setItemResults((prev) => {
+        const next = { ...prev }
+        for (const i of ALL_ITEMS) {
+          if (flagged.has(i.code)) continue // needs re-rating
+          const r = prevAssessment.itemResults?.[i.code]
+          if (r && !next[i.code]?.resultCode) next[i.code] = { ...r }
+        }
+        return next
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [header.type, prevAssessment, loading])
 
   // Live classification + score. Recomputed on every itemResult change.
   const classification = useMemo(() => runEngine(itemResults), [itemResults])
@@ -152,14 +232,29 @@ export default function AssessmentForm() {
   const sc = SC[classification.overallStatus] || SC.active
   const hc = healthColor(score)
 
+  // Active = the items the inspector actually has to rate. For Initial /
+  // Periodic that's every item. For Pre-Dispatch it's safety-critical items.
+  // For Re-Assessment it's previously-flagged items only.
+  const activeItems = useMemo(() => {
+    if (!(activeItemSet instanceof Set)) return ALL_ITEMS
+    return ALL_ITEMS.filter((i) => activeItemSet.has(i.code))
+  }, [activeItemSet])
+
+  const activeCategories = useMemo(() => {
+    if (!(activeItemSet instanceof Set)) return CATEGORIES
+    return CATEGORIES
+      .map((c) => ({ ...c, items: c.items.filter((i) => activeItemSet.has(i.code)) }))
+      .filter((c) => c.items.length > 0)
+  }, [activeItemSet])
+
   const answered = useMemo(
-    () => Object.values(itemResults).filter((r) => r?.resultCode && r.resultCode !== 'na').length,
-    [itemResults],
+    () => activeItems.filter((i) => {
+      const r = itemResults?.[i.code]
+      return r?.resultCode && r.resultCode !== 'na'
+    }).length,
+    [activeItems, itemResults],
   )
-  const totalItems = useMemo(
-    () => CATEGORIES.reduce((n, c) => n + c.items.length, 0),
-    [],
-  )
+  const totalItems = activeItems.length
 
   const setResult = (code, patch) => {
     setItemResults((prev) => ({
@@ -198,10 +293,13 @@ export default function AssessmentForm() {
     setHeader({
       plate: '', make: '', model: '', yearModel: '',
       client: '', branch: '', technician: '', odometer: '',
-      type: 'New Assessment', date: new Date().toISOString().slice(0, 10),
+      type: 'Initial', date: new Date().toISOString().slice(0, 10),
     })
     setItemResults({})
+    setPrevAssessment(null)
+    setReassessMode(null)
     setDraftSavedAt(null)
+    prefilledKeyRef.current = ''
   }
 
   if (loading) return <div className="p-4 sm:p-6 text-sm text-gray-500">Loading appointment…</div>
@@ -294,30 +392,47 @@ export default function AssessmentForm() {
           <Field label="Branch"><input value={header.branch} onChange={(e) => setHeader((h) => ({ ...h, branch: e.target.value }))} className="input w-full" /></Field>
           <Field label="Technician"><input value={header.technician} onChange={(e) => setHeader((h) => ({ ...h, technician: e.target.value }))} className="input w-full" /></Field>
           <Field label="Type">
-            <select value={header.type} onChange={(e) => setHeader((h) => ({ ...h, type: e.target.value }))} className="input w-full">
-              <option>New Assessment</option>
-              <option>Re-Assessment</option>
-              <option>Quick Fix</option>
+            <select value={header.type} onChange={(e) => { setHeader((h) => ({ ...h, type: e.target.value })); prefilledKeyRef.current = '' }} className="input w-full">
+              {ASSESS_TYPES.map((t) => <option key={t}>{t}</option>)}
             </select>
           </Field>
         </div>
       </div>
 
+      {/* ── Type-specific banner + Re-Assessment mode chooser ────── */}
+      <TypeBanner
+        type={header.type}
+        plate={header.plate}
+        prevAssessment={prevAssessment}
+        prevLoading={prevLoading}
+        activeItems={activeItems}
+        reassessMode={reassessMode}
+        setReassessMode={setReassessMode}
+      />
+
       {/* ── Inspection categories ───────────────────────────────── */}
-      <div className="mx-3 sm:mx-4 space-y-2">
-        {CATEGORIES.map((cat, idx) => (
-          <CategoryBlock
-            key={cat.code}
-            cat={cat}
-            stepIndex={idx + 1}
-            stepCount={CATEGORIES.length}
-            open={openCat === cat.code}
-            onToggle={() => setOpenCat(openCat === cat.code ? null : cat.code)}
-            itemResults={itemResults}
-            setResult={setResult}
-          />
-        ))}
-      </div>
+      {activeCategories.length === 0 ? (
+        <div className="mx-3 sm:mx-4 bg-white border border-dashed rounded-xl p-6 text-center text-gray-400 text-sm">
+          {header.type === 'Re-Assessment' && !prevAssessment
+            ? 'No previous assessment to re-check. Pick another type.'
+            : 'No items to rate for this type.'}
+        </div>
+      ) : (
+        <div className="mx-3 sm:mx-4 space-y-2">
+          {activeCategories.map((cat, idx) => (
+            <CategoryBlock
+              key={cat.code}
+              cat={cat}
+              stepIndex={idx + 1}
+              stepCount={activeCategories.length}
+              open={openCat === cat.code}
+              onToggle={() => setOpenCat(openCat === cat.code ? null : cat.code)}
+              itemResults={itemResults}
+              setResult={setResult}
+            />
+          ))}
+        </div>
+      )}
 
       {/* ── Sticky submit bar ───────────────────────────────────── */}
       <div
@@ -356,6 +471,121 @@ function Field({ label, children }) {
       {children}
     </label>
   )
+}
+
+// Per-type context strip + (for Re-Assessment) mode chooser. Mirrors
+// mg-fms-app/src/App.jsx screen="reassess-mode" + the orange/blue filter
+// banners in screen="inspect".
+function TypeBanner({ type, plate, prevAssessment, prevLoading, activeItems, reassessMode, setReassessMode }) {
+  if (type === 'Pre-Dispatch') {
+    return (
+      <div className="mx-3 sm:mx-4 mb-3 bg-blue-600 text-white rounded-xl px-3 py-2.5 flex items-center gap-2 text-xs font-bold">
+        <span>🚛</span>
+        Pre-Dispatch — safety-critical items only · {activeItems.length} item{activeItems.length === 1 ? '' : 's'}
+      </div>
+    )
+  }
+  if (type === 'Re-Assessment') {
+    if (!plate) {
+      return (
+        <div className="mx-3 sm:mx-4 mb-3 bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+          Enter a plate number above to load the previous assessment.
+        </div>
+      )
+    }
+    if (prevLoading) {
+      return (
+        <div className="mx-3 sm:mx-4 mb-3 bg-gray-100 rounded-xl p-3 text-xs text-gray-500 animate-pulse">
+          Loading previous assessment for {plate}…
+        </div>
+      )
+    }
+    if (!prevAssessment) {
+      return (
+        <div className="mx-3 sm:mx-4 mb-3 bg-amber-50 border-2 border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+          No previous assessment found for <span className="font-mono font-bold">{plate}</span>. Pick a different assessment type, or assess this vehicle as <strong>Initial</strong> first.
+        </div>
+      )
+    }
+    // Got a previous assessment. Show the mode chooser if no mode is
+    // selected yet. Once a mode is chosen, show a condensed header.
+    const flaggedCount = activeItems.length
+    const prevRwa = prevAssessment.rwaNumber
+    if (!reassessMode) {
+      return (
+        <div className="mx-3 sm:mx-4 mb-3 space-y-3">
+          <div className="bg-white border rounded-xl p-3">
+            <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Previous assessment</div>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <div className="font-black text-sm text-gray-900 font-mono">{prevRwa}</div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  {prevAssessment.header?.date} · {prevAssessment.header?.branch || '—'}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-black text-red-700">{flaggedCount}</div>
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">flagged</div>
+              </div>
+            </div>
+          </div>
+          <div className="text-[11px] font-bold text-gray-500 uppercase tracking-widest text-center">Choose mode</div>
+          <button
+            type="button"
+            onClick={() => setReassessMode('quickfix')}
+            className="w-full bg-white rounded-2xl border-2 border-blue-300 p-4 text-left hover:border-blue-500 active:scale-[0.99] transition-all"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center text-2xl shrink-0">🔧</div>
+              <div className="flex-1">
+                <div className="font-black text-gray-900">Quick Fix</div>
+                <div className="text-xs text-gray-500 mt-0.5">Document parts already replaced. Skip inspection, go straight to replacement details.</div>
+                <div className="text-[11px] text-blue-700 font-bold mt-1">Best when repair is already complete</div>
+              </div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setReassessMode('full')}
+            className="w-full bg-white rounded-2xl border-2 border-gray-300 p-4 text-left hover:border-red-500 active:scale-[0.99] transition-all"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-red-100 flex items-center justify-center text-2xl shrink-0">🔁</div>
+              <div className="flex-1">
+                <div className="font-black text-gray-900">Full Re-Assessment</div>
+                <div className="text-xs text-gray-500 mt-0.5">Re-inspect {flaggedCount} flagged item{flaggedCount === 1 ? '' : 's'} with pass / monitor / fail / replaced.</div>
+                <div className="text-[11px] text-red-700 font-bold mt-1">Best when some items still need inspection</div>
+              </div>
+            </div>
+          </button>
+        </div>
+      )
+    }
+    if (reassessMode === 'quickfix') {
+      // Quick Fix screen itself ships in 6c. For now show a placeholder with
+      // a way back to the mode picker.
+      return (
+        <div className="mx-3 sm:mx-4 mb-3 bg-blue-50 border-2 border-blue-200 rounded-xl p-4 space-y-2">
+          <div className="text-sm font-bold text-blue-900">Quick Fix mode</div>
+          <div className="text-xs text-blue-800">
+            A dedicated Quick Fix screen (document replaced parts + labor) is the next step. For now, mark items below as <strong>Replaced</strong> to record repairs.
+          </div>
+          <button type="button" onClick={() => setReassessMode(null)} className="text-[11px] text-blue-700 font-bold hover:underline">← Switch mode</button>
+        </div>
+      )
+    }
+    return (
+      <div className="mx-3 sm:mx-4 mb-3 bg-orange-50 border-2 border-orange-200 rounded-xl p-3 flex items-start gap-2 text-xs text-orange-900">
+        <span>🔁</span>
+        <div className="flex-1">
+          <div className="font-bold">Full Re-Assessment — {flaggedCount} flagged item{flaggedCount === 1 ? '' : 's'}</div>
+          <div className="mt-0.5">Re-rate each flagged item. Non-flagged items from <span className="font-mono font-bold">{prevRwa}</span> have been pre-filled.</div>
+        </div>
+        <button type="button" onClick={() => setReassessMode(null)} className="text-[10px] text-orange-700 font-bold hover:underline shrink-0">Change</button>
+      </div>
+    )
+  }
+  return null
 }
 
 // Friendly relative time for the draft indicator. No deps.
