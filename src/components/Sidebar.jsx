@@ -100,6 +100,16 @@ export default function Sidebar({ drawerOpen = false, onClose }) {
     'md:static md:translate-x-0 md:w-60 md:h-full md:z-auto ' +
     (drawerOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0')
 
+  // Close the drawer when any link inside it is tapped. Relying on
+  // pathname-change alone wasn't enough — tapping a Quick Link that points
+  // at the current route (e.g. "+ Booking" from /appointments) left the
+  // drawer overlaid on top of the content. Harmless on md+ since onClose
+  // still just flips a state that CSS ignores at that breakpoint.
+  const handleNavClick = (e) => {
+    if (!onClose) return
+    if (e.target.closest && e.target.closest('a')) onClose()
+  }
+
   const MobileCloseButton = () => (
     <button
       onClick={onClose}
@@ -112,7 +122,7 @@ export default function Sidebar({ drawerOpen = false, onClose }) {
 
   if (customerView) {
     return (
-      <aside className={shellClasses}>
+      <aside className={shellClasses} onClick={handleNavClick}>
         <MobileCloseButton />
         <Brand />
         <Section title="Fleet">
@@ -132,7 +142,7 @@ export default function Sidebar({ drawerOpen = false, onClose }) {
   }
 
   return (
-    <aside className={shellClasses}>
+    <aside className={shellClasses} onClick={handleNavClick}>
       <MobileCloseButton />
       <Brand />
       <Section title="Quick Links">

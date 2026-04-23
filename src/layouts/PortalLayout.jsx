@@ -11,7 +11,10 @@ export default function PortalLayout() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
 
-  useEffect(() => { setDrawerOpen(false) }, [location.pathname])
+  // Close on any navigation. location.key changes on every navigate — even
+  // same-path navigations with a different query string or hash — so this
+  // catches cases pathname alone would miss.
+  useEffect(() => { setDrawerOpen(false) }, [location.key])
 
   // Lock body scroll while drawer is open on mobile so the background doesn't
   // scroll under the overlay.
