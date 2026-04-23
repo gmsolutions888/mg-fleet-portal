@@ -9,6 +9,9 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { db } from '../lib/firebase'
+import { useAuth } from '../context/AuthContext'
+import { isClientView } from '../lib/roles'
+import { isVisibleToClient, statusBadge } from '../lib/reviewStatus'
 import {
   ALL_ITEMS, CATEGORIES, DEFECT_CODES, PMS_ITEMS, SC, ACTION_CFG,
   calcHealthScore, healthColor, getAction,
@@ -29,6 +32,8 @@ async function fetchAssessmentByRwa(rwa) {
 export default function AssessmentView() {
   const { rwa } = useParams()
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const clientView = isClientView(profile)
   const [state, setState] = useState({ loading: true, assessment: null, error: null })
 
   useEffect(() => {
@@ -39,16 +44,34 @@ export default function AssessmentView() {
     return () => { cancelled = true }
   }, [rwa])
 
-  if (state.loading) return <div className="p-6 text-gray-500">Loading assessment…</div>
+  if (state.loading) return <div className="p-4 sm:p-6 text-gray-500">Loading assessment…</div>
   if (!state.assessment) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline mb-4">← Back</button>
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
           <div className="font-semibold mb-1">Assessment not found</div>
           <div className="text-xs">
             No assessment in mg-fms with RWA number <span className="font-mono">{rwa}</span>.
             {state.error && <> ({String(state.error.code || state.error.message)})</>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Hide assessments that haven't been forwarded to the client yet — but only
+  // for client-view profiles. Internal staff and admins always see everything.
+  if (clientView && !isVisibleToClient(state.assessment.review_status)) {
+    const badge = statusBadge(state.assessment.review_status)
+    return (
+      <div className="p-4 sm:p-6">
+        <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline mb-4">← Back</button>
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
+          <div className="font-semibold mb-1">Assessment not yet shared</div>
+          <div className="text-xs">
+            This assessment is still being reviewed and hasn't been forwarded to you yet.
+            Status: <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold border ${badge.tone}`}>{badge.label}</span>
           </div>
         </div>
       </div>

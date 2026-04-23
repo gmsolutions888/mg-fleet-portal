@@ -17,6 +17,7 @@ import {
   collection, doc, getDoc, onSnapshot, orderBy, query,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { isVisibleToClient } from './reviewStatus'
 
 export { vehicleImage } from './dummyData'
 
@@ -186,14 +187,16 @@ function toVehicle(assessment, pmsRecord) {
 // Subscribe to the combined vehicle list. The callback is invoked whenever
 // either collection updates. Returns an unsubscribe function.
 //
-//   watchVehicles({ company, branch }, cb)
+//   watchVehicles({ company, branch, clientVisibleOnly }, cb)
 //     cb({ vehicles, source, error, loading })
 //       source: 'firestore' | 'unconfigured' | 'error'
 //
 // When company is provided, vehicles whose assessment's `header.client`
-// doesn't match (case-insensitive) are dropped. No dummy fallback — if the
-// Firestore read is empty or blocked, the callback reports it so the UI can
-// show an empty state or an error banner.
+// doesn't match (case-insensitive) are dropped. When clientVisibleOnly is
+// true, assessments whose review_status is not SENT_TO_CLIENT are dropped
+// before the latest-per-plate calculation — fleet clients only see vetted
+// data. No dummy fallback — if the Firestore read is empty or blocked, the
+// callback reports it so the UI can show an empty state or an error banner.
 export function watchVehicles(options, cb) {
   if (!db) {
     cb({ vehicles: [], source: 'unconfigured', error: null, loading: false })
@@ -204,7 +207,10 @@ export function watchVehicles(options, cb) {
   let ready = { a: false, p: false }
 
   const emit = () => {
-    const latest = latestByPlate(assessments)
+    const visible = options?.clientVisibleOnly
+      ? assessments.filter((a) => isVisibleToClient(a?.review_status))
+      : assessments
+    const latest = latestByPlate(visible)
     let rows = []
     for (const [plate, a] of latest) {
       rows.push(toVehicle(a, pms[plate]))
@@ -259,7 +265,7 @@ export function watchVehicles(options, cb) {
 // loses the space ("/vehicles/UFF4915"), so we must find the matching
 // assessment by normalized comparison, then look up pms_records using the
 // original plate (space and all) — the pms_records doc ID is the raw plate.
-export async function loadVehicleWithHistory(plateRaw) {
+export async function loadVehicleWithHistory(plateRaw, options = {}) {
   const plate = normalizePlate(plateRaw)
   if (!db) return { vehicle: null, history: [], source: 'unconfigured' }
   try {
@@ -270,9 +276,12 @@ export async function loadVehicleWithHistory(plateRaw) {
         (e) => { reject(e) },
       )
     })
-    const matching = assessSnap.docs
+    let matching = assessSnap.docs
       .map((d) => ({ _docId: d.id, ...d.data() }))
       .filter((a) => normalizePlate(a?.header?.plate) === plate)
+    if (options.clientVisibleOnly) {
+      matching = matching.filter((a) => isVisibleToClient(a?.review_status))
+    }
     if (matching.length === 0) return { vehicle: null, history: [], source: 'firestore' }
     const originalPlate = matching[0]?.header?.plate || plate
     const pmsSnap = await getDoc(doc(db, 'pms_records', originalPlate))

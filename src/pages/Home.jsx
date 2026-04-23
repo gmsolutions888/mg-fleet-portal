@@ -13,8 +13,9 @@ import StatusPill, { PipelineCard } from '../components/ui/StatusPill'
 import VehicleImage from '../components/ui/VehicleImage'
 import Icon from '../components/ui/Icon'
 
-const STATUS_ORDER = ['BOOKED', 'ARRIVED', 'DIAGNOSED', 'ONGOING', 'PENDING', 'COMPLETED']
+const STATUS_ORDER = ['PENDING_BRANCH_APPROVAL', 'BOOKED', 'ARRIVED', 'DIAGNOSED', 'ONGOING', 'PENDING', 'COMPLETED']
 const STATUS_TONE = {
+  PENDING_BRANCH_APPROVAL: 'amber',
   BOOKED: 'gray',
   ARRIVED: 'sky',
   DIAGNOSED: 'indigo',
@@ -24,12 +25,18 @@ const STATUS_TONE = {
 }
 
 const HEADER_TEXT = {
+  PENDING_BRANCH_APPROVAL: 'text-amber-600',
   BOOKED: 'text-gray-500',
   ARRIVED: 'text-sky-600',
   DIAGNOSED: 'text-indigo-600',
   ONGOING: 'text-blue-600',
   PENDING: 'text-yellow-600',
   COMPLETED: 'text-green-600',
+}
+
+// Pipeline cards use this short form so the label fits inside the chip.
+const STATUS_DISPLAY = {
+  PENDING_BRANCH_APPROVAL: 'PENDING APPROVAL',
 }
 
 export default function Home() {
@@ -80,22 +87,22 @@ export default function Home() {
   const filtered = filter === 'ALL' ? appointments : appointments.filter((a) => a.status === filter)
 
   return (
-    <div className="p-6 pb-20">
-      <div className="flex items-start justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-800">My Garage - {branch}</h1>
-        {source === 'dummy' && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">Demo data</span>}
+    <div className="p-3 sm:p-6 pb-20">
+      <div className="flex items-start justify-between gap-2 mb-4">
+        <h1 className="text-lg sm:text-2xl font-semibold text-gray-800 truncate">My Garage - {branch}</h1>
+        {source === 'dummy' && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 shrink-0">Demo data</span>}
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 mb-3">
         <StatCard label="Cars in the Garage" value={summary.carsInGarage} icon={<Icon name="car" className="w-5 h-5" />} small />
         <StatCard label="Backlogs"           value={summary.backlogs}     icon={<Icon name="backlog" className="w-5 h-5" />} small />
         <StatCard label="Scheduled"          value={summary.scheduled}    icon={<Icon name="scheduled" className="w-5 h-5" />} small />
         <StatCard label="Walk-ins"           value={summary.walkins}      icon={<Icon name="walk" className="w-5 h-5" />} small />
       </div>
 
-      <div className="grid grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mb-4">
         {STATUS_ORDER.map((s) => (
-          <PipelineCard key={s} label={s} count={byStatus[s]?.length || 0} tone={STATUS_TONE[s]} />
+          <PipelineCard key={s} label={STATUS_DISPLAY[s] || s} count={byStatus[s]?.length || 0} tone={STATUS_TONE[s]} />
         ))}
       </div>
 
@@ -125,20 +132,50 @@ export default function Home() {
 
 function CardView({ byStatus, filter }) {
   const statuses = filter === 'ALL' ? STATUS_ORDER : [filter]
+  // On mobile/tablet the kanban layout is unusable (7 columns × vehicle cards
+  // ≈ 1050px minimum). Collapse to a single column per status with the header
+  // acting as a collapsible-style row — users scan one status at a time.
+  // md+ keeps the wide kanban with its horizontal scroll so branch staff on
+  // laptops still see the full pipeline at a glance.
   return (
-    <div className="p-4 overflow-x-auto">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 min-w-[900px]">
-        {statuses.map((s) => (
-          <div key={s}>
-            <div className={`text-[11px] font-bold uppercase tracking-wider pb-2 ${HEADER_TEXT[s] || 'text-gray-600'}`}>{s} →</div>
-            <div className="space-y-3">
-              {(byStatus[s] || []).map((a) => <AppointmentCard key={a.id} appt={a} />)}
-              {(!byStatus[s] || byStatus[s].length === 0) && (
-                <div className="text-[11px] text-gray-400 italic border border-dashed rounded p-3">No vehicles</div>
-              )}
+    <div className="p-3 sm:p-4">
+      {/* Mobile & tablet: stacked list of status sections */}
+      <div className="space-y-5 lg:hidden">
+        {statuses.map((s) => {
+          const rows = byStatus[s] || []
+          if (filter === 'ALL' && rows.length === 0) return null
+          return (
+            <div key={s}>
+              <div className={`text-[11px] font-bold uppercase tracking-wider pb-2 flex items-center justify-between ${HEADER_TEXT[s] || 'text-gray-600'}`}>
+                <span>{STATUS_DISPLAY[s] || s}</span>
+                <span className="text-gray-400">{rows.length}</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {rows.map((a) => <AppointmentCard key={a.id} appt={a} />)}
+                {rows.length === 0 && (
+                  <div className="col-span-full text-[11px] text-gray-400 italic border border-dashed rounded p-3">No vehicles</div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
+      </div>
+
+      {/* Desktop: kanban with horizontal scroll fallback */}
+      <div className="hidden lg:block overflow-x-auto">
+        <div className="grid grid-cols-7 gap-3 min-w-[1050px]">
+          {statuses.map((s) => (
+            <div key={s}>
+              <div className={`text-[11px] font-bold uppercase tracking-wider pb-2 ${HEADER_TEXT[s] || 'text-gray-600'}`}>{STATUS_DISPLAY[s] || s} →</div>
+              <div className="space-y-3">
+                {(byStatus[s] || []).map((a) => <AppointmentCard key={a.id} appt={a} />)}
+                {(!byStatus[s] || byStatus[s].length === 0) && (
+                  <div className="text-[11px] text-gray-400 italic border border-dashed rounded p-3">No vehicles</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

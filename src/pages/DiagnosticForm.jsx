@@ -5,13 +5,11 @@
 // appointment to DIAGNOSED, navigates to /assessments/{rwaNumber}.
 //
 // Deliberately OUT OF SCOPE for this first port (follow-on work):
-//   - photo capture / compression / base64 storage
 //   - PMS sub-flow (31 items, next-due calc, parts/brand details)
 //   - Quick Fix and full Re-Assessment flows
 //   - Supervisor override
-//   - Draft persistence to localStorage
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchContextDoc } from '../lib/notifications'
@@ -25,28 +23,69 @@ import PhotoCapture from '../components/PhotoCapture'
 
 const RESULT_OPTIONS = ['pass', 'monitor', 'fail_critical', 'replaced', 'na']
 
+// Draft storage. Keyed by appointment id (collision-proof — mg-fms used
+// `plate|date` which broke if the same plate was inspected twice in one day).
+const DRAFT_VERSION = 1
+const draftKey = (appointmentId) => `mgfp.diagnostic.v${DRAFT_VERSION}.${appointmentId || 'standalone'}`
+
+function loadDraft(appointmentId) {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(draftKey(appointmentId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveDraft(appointmentId, payload) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(draftKey(appointmentId), JSON.stringify({ ...payload, savedAt: Date.now() }))
+  } catch (err) {
+    // Quota exceeded most likely — drafts are best-effort.
+    console.warn('[diagnostic] draft save failed:', err?.message || err)
+  }
+}
+
+function clearDraft(appointmentId) {
+  if (typeof window === 'undefined') return
+  try { window.localStorage.removeItem(draftKey(appointmentId)) } catch {}
+}
+
 export default function DiagnosticForm() {
   const { id: appointmentId } = useParams()
   const navigate = useNavigate()
   const { profile } = useAuth()
 
+  // Hydrate from any saved draft synchronously so the user sees their work
+  // immediately on remount instead of a flash of empty inputs.
+  const initialDraft = useMemo(() => loadDraft(appointmentId), [appointmentId])
+
   const [appointment, setAppointment] = useState(null)
   const [loading, setLoading] = useState(true)
   const [vehicles, setVehicles] = useState([])
 
-  const [header, setHeader] = useState({
+  const [header, setHeader] = useState(() => initialDraft?.header || {
     plate: '', make: '', model: '', yearModel: '',
     client: '', branch: '', technician: '', odometer: '',
     type: 'New Assessment', date: new Date().toISOString().slice(0, 10),
   })
-  const [itemResults, setItemResults] = useState({})
+  const [itemResults, setItemResults] = useState(() => initialDraft?.itemResults || {})
   const [openCat, setOpenCat] = useState(CATEGORIES[0]?.code || null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [draftSavedAt, setDraftSavedAt] = useState(initialDraft?.savedAt || null)
+  const [draftRestored] = useState(Boolean(initialDraft))
 
   // Load the parent appointment + vehicle registry in parallel. Only fires
   // once per appointmentId — `profile` is captured at first load so later
-  // profile updates don't clobber the user's edits.
+  // profile updates don't clobber the user's edits. Prefill is non-destructive:
+  // only EMPTY fields get filled, so a restored draft (or any manual edit)
+  // always wins.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -55,12 +94,14 @@ export default function DiagnosticForm() {
       setAppointment(appt)
       setHeader((h) => ({
         ...h,
-        plate: appt?.plateNo || '',
-        branch: appt?.branch || profile?.branch || '',
-        client: appt?.company || '',
-        technician: appt?.mechanic && appt.mechanic !== 'Not yet assigned'
-          ? appt.mechanic
-          : (profile?.user_fullname || profile?.displayName || ''),
+        plate: h.plate || appt?.plateNo || '',
+        branch: h.branch || appt?.branch || profile?.branch || '',
+        client: h.client || appt?.company || '',
+        technician: h.technician || (
+          appt?.mechanic && appt.mechanic !== 'Not yet assigned'
+            ? appt.mechanic
+            : (profile?.user_fullname || profile?.displayName || '')
+        ),
       }))
       setLoading(false)
     })
@@ -87,6 +128,20 @@ export default function DiagnosticForm() {
       odometer: h.odometer || (v.latestOdo ? String(v.latestOdo) : ''),
     }))
   }, [header.plate, vehicles])
+
+  // Persist the in-progress form to localStorage on every change so a refresh,
+  // tab close, or accidental nav doesn't lose work. Debounced via a 600ms
+  // trailing timer — typing into a text field doesn't write 30 times.
+  const saveTimerRef = useRef(null)
+  useEffect(() => {
+    if (loading) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveDraft(appointmentId, { header, itemResults })
+      setDraftSavedAt(Date.now())
+    }, 600)
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+  }, [appointmentId, header, itemResults, loading])
 
   // Live classification + score. Recomputed on every itemResult change.
   const classification = useMemo(() => runEngine(itemResults), [itemResults])
@@ -127,6 +182,8 @@ export default function DiagnosticForm() {
         },
         itemResults,
       })
+      // Submit succeeded — draft is no longer needed.
+      clearDraft(appointmentId)
       navigate(`/assessments/${rwaNumber}`)
     } catch (err) {
       console.error('[diagnostic] createAssessment failed', err)
@@ -135,23 +192,48 @@ export default function DiagnosticForm() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-gray-500">Loading appointment…</div>
+  const onDiscardDraft = () => {
+    if (!window.confirm('Discard saved draft and reset the form?')) return
+    clearDraft(appointmentId)
+    setHeader({
+      plate: '', make: '', model: '', yearModel: '',
+      client: '', branch: '', technician: '', odometer: '',
+      type: 'New Assessment', date: new Date().toISOString().slice(0, 10),
+    })
+    setItemResults({})
+    setDraftSavedAt(null)
+  }
+
+  if (loading) return <div className="p-4 sm:p-6 text-sm text-gray-500">Loading appointment…</div>
 
   return (
     <div className="pb-24">
-      <div className="p-4 flex items-center justify-between">
-        <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline">← Back</button>
-        {appointment ? (
-          <div className="text-xs text-gray-500">
-            Appt <span className="font-mono">{appointmentId.slice(0, 6)}</span> · {appointment.status}
-          </div>
-        ) : (
-          <div className="text-xs text-amber-700">Appointment not found — you can still file a standalone assessment.</div>
-        )}
+      <div className="p-3 sm:p-4 flex items-start justify-between gap-3 flex-wrap">
+        <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline shrink-0">← Back</button>
+        <div className="flex items-center gap-2 sm:gap-3 text-xs flex-wrap justify-end">
+          {draftRestored && (
+            <span className="text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">Draft restored</span>
+          )}
+          {draftSavedAt && (
+            <span className="text-gray-500" title={new Date(draftSavedAt).toLocaleString()}>
+              Draft saved {timeAgo(draftSavedAt)}
+            </span>
+          )}
+          {(draftSavedAt || draftRestored) && (
+            <button onClick={onDiscardDraft} className="text-red-600 hover:underline">Discard draft</button>
+          )}
+          {appointment ? (
+            <div className="text-gray-500">
+              Appt <span className="font-mono">{appointmentId.slice(0, 6)}</span> · {appointment.status}
+            </div>
+          ) : (
+            <div className="text-amber-700">Appointment not found — standalone mode</div>
+          )}
+        </div>
       </div>
 
       {/* ── Live status banner ───────────────────────────────────── */}
-      <div className={`bg-gradient-to-b ${sc.grad} text-white mx-4 rounded-2xl p-4 flex items-center gap-4`}>
+      <div className={`bg-gradient-to-b ${sc.grad} text-white mx-3 sm:mx-4 rounded-2xl p-4 flex items-center gap-4`}>
         <div className="flex-1">
           <div className="text-[10px] tracking-widest opacity-70 font-bold">LIVE CLASSIFICATION</div>
           <div className="text-lg font-black">{sc.label}</div>
@@ -166,9 +248,9 @@ export default function DiagnosticForm() {
       </div>
 
       {/* ── Vehicle & header ─────────────────────────────────────── */}
-      <div className="m-4 bg-white border rounded-xl p-4">
+      <div className="m-3 sm:m-4 bg-white border rounded-xl p-3 sm:p-4">
         <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-3">Vehicle & Header</div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <Field label="Plate">
             <input value={header.plate} onChange={(e) => setHeader((h) => ({ ...h, plate: e.target.value.toUpperCase() }))} className="input w-full uppercase" />
           </Field>
@@ -193,11 +275,13 @@ export default function DiagnosticForm() {
       </div>
 
       {/* ── Inspection categories ───────────────────────────────── */}
-      <div className="mx-4 space-y-2">
-        {CATEGORIES.map((cat) => (
+      <div className="mx-3 sm:mx-4 space-y-2">
+        {CATEGORIES.map((cat, idx) => (
           <CategoryBlock
             key={cat.code}
             cat={cat}
+            stepIndex={idx + 1}
+            stepCount={CATEGORIES.length}
             open={openCat === cat.code}
             onToggle={() => setOpenCat(openCat === cat.code ? null : cat.code)}
             itemResults={itemResults}
@@ -240,10 +324,23 @@ function Field({ label, children }) {
   )
 }
 
-function CategoryBlock({ cat, open, onToggle, itemResults, setResult }) {
+// Friendly relative time for the draft indicator. No deps.
+function timeAgo(ts) {
+  const s = Math.floor((Date.now() - ts) / 1000)
+  if (s < 5) return 'just now'
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+function CategoryBlock({ cat, stepIndex, stepCount, open, onToggle, itemResults, setResult }) {
   const fails = cat.items.filter((i) => itemResults[i.code]?.resultCode === 'fail_critical').length
   const mons = cat.items.filter((i) => itemResults[i.code]?.resultCode === 'monitor').length
   const answered = cat.items.filter((i) => itemResults[i.code]?.resultCode).length
+  const complete = answered === cat.items.length && cat.items.length > 0
   return (
     <div className="bg-white border rounded-xl overflow-hidden">
       <button
@@ -251,12 +348,23 @@ function CategoryBlock({ cat, open, onToggle, itemResults, setResult }) {
         onClick={onToggle}
         className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{cat.icon}</span>
-          <span className="font-semibold text-sm text-gray-800">{cat.label}</span>
-          <span className="text-xs text-gray-400">({answered}/{cat.items.length})</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ${
+            complete ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 border'
+          }`}>
+            {complete ? '✓' : stepIndex}
+          </span>
+          <span className="text-lg shrink-0">{cat.icon}</span>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 leading-none">
+              Step {stepIndex} of {stepCount}
+            </div>
+            <div className="font-semibold text-sm text-gray-800 truncate">
+              {cat.label} <span className="text-xs text-gray-400 font-normal">({answered}/{cat.items.length})</span>
+            </div>
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2 text-xs shrink-0">
           {fails > 0 && <span className="text-red-600 font-bold">🚨 {fails}</span>}
           {mons > 0 && <span className="text-amber-600 font-bold">⚠ {mons}</span>}
           <span className={`text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>

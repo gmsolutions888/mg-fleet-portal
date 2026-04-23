@@ -4,9 +4,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { canReviewAtBranch } from '../lib/roles'
 import { BRANCHES, FLEET_COMPANIES } from '../lib/dummyData'
 import { watchVehicles } from '../lib/vehicles'
-import { watchAppointments, createAppointment, updateAppointmentStatus } from '../lib/appointments'
+import {
+  APPT_STATUS,
+  watchAppointments, createAppointment, updateAppointmentStatus,
+  approveBookingAtBranch, rejectBookingAtBranch,
+} from '../lib/appointments'
 import { PMS_ITEMS } from '../lib/mgfms-catalog'
 import StatCard from '../components/ui/StatCard'
 import SlidePanel from '../components/ui/SlidePanel'
@@ -54,8 +59,11 @@ function composeScheduledAt(dateStr, timeSlot) {
 export default function ServiceBooking() {
   const { profile } = useAuth()
   const branch = (profile?.branch || 'MGCAVITE').toUpperCase()
+  const canReview = canReviewAtBranch(profile?.role) || profile?.is_admin
   const [showPanel, setShowPanel] = useState(false)
   const [editId, setEditId] = useState(null)
+  const [queueActing, setQueueActing] = useState(null)
+  const [queueError, setQueueError] = useState(null)
   const today = new Date()
 
   const [appointments, setAppointments] = useState([])
@@ -73,11 +81,12 @@ export default function ServiceBooking() {
   const stats = useMemo(() => {
     const backlogs = appointments.filter((a) => ['ARRIVED', 'ONGOING', 'PENDING'].includes(a.status)).length
     const confirmed = appointments.filter((a) => a.status === 'BOOKED' || a.status === 'CONFIRMED').length
-    const tentative = appointments.filter((a) => a.status === 'TENTATIVE').length
-    return { backlogs, confirmed, tentative }
+    const pendingApproval = appointments.filter((a) => a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL).length
+    return { backlogs, confirmed, pendingApproval }
   }, [appointments])
 
-  // Group today's bookings by scheduled time slot for the day view.
+  // Group today's bookings by scheduled time slot for the day view. Only shows
+  // bookings that have cleared branch approval (i.e. not PENDING_BRANCH_APPROVAL).
   const slotMap = useMemo(() => {
     const map = {}
     for (const a of appointments) {
@@ -90,28 +99,43 @@ export default function ServiceBooking() {
     return map
   }, [appointments, vehicles])
 
-  // Tentative fleet bookings (company-tagged + awaiting confirmation). Rendered
-  // as a separate row below the time-slot grid so staff can triage them.
-  const fleetTentative = useMemo(() => {
+  // Fleet bookings awaiting branch approval. Rendered below the time-slot grid
+  // so the branch reviewer can act on them inline.
+  const pendingApproval = useMemo(() => {
     return appointments
-      .filter((a) => a.status === 'TENTATIVE' && a.company)
+      .filter((a) => a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL && a.company)
       .map((a) => {
         const v = vehicles.find((x) => x.plateNo === a.plateNo)
         return { ...a, model: v?.model, yearModel: v?.yearModel }
       })
   }, [appointments, vehicles])
 
+  const onApproveQueue = async (id) => {
+    setQueueActing(id); setQueueError(null)
+    try { await approveBookingAtBranch(id) }
+    catch (err) { setQueueError(err.message || String(err)) }
+    finally { setQueueActing(null) }
+  }
+  const onRejectQueue = async (id) => {
+    const reason = window.prompt('Reason for rejecting this booking? (optional)') ?? ''
+    if (reason === null) return
+    setQueueActing(id); setQueueError(null)
+    try { await rejectBookingAtBranch(id, reason.trim() || null) }
+    catch (err) { setQueueError(err.message || String(err)) }
+    finally { setQueueActing(null) }
+  }
+
   return (
-    <div className="p-6 pb-20">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold text-gray-800">Service Booking - {branch}</h1>
-        {source === 'dummy' && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">Demo data</span>}
+    <div className="p-3 sm:p-6 pb-20">
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <h1 className="text-lg sm:text-2xl font-semibold text-gray-800 truncate">Service Booking - {branch}</h1>
+        {source === 'dummy' && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 shrink-0">Demo data</span>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-        <StatCard label="Backlogs"          value={stats.backlogs}  tone="blue"  icon={<Icon name="backlog" className="w-5 h-5" />} />
-        <StatCard label="Confirmed Bookings" value={stats.confirmed} tone="green" icon={<Icon name="check" className="w-5 h-5" />} />
-        <StatCard label="Tentative Bookings" value={stats.tentative} tone="amber" icon={<Icon name="clock" className="w-5 h-5" />} />
+        <StatCard label="Backlogs"             value={stats.backlogs}        tone="blue"  icon={<Icon name="backlog" className="w-5 h-5" />} />
+        <StatCard label="Confirmed Bookings"   value={stats.confirmed}       tone="green" icon={<Icon name="check" className="w-5 h-5" />} />
+        <StatCard label="Pending Approval"     value={stats.pendingApproval} tone="amber" icon={<Icon name="clock" className="w-5 h-5" />} />
       </div>
 
       <div className="bg-gray-900 text-white rounded-md px-4 py-2 mb-2 flex items-center justify-between text-sm font-semibold">
@@ -140,31 +164,62 @@ export default function ServiceBooking() {
       </div>
 
       <div className="bg-gray-900 text-white rounded-md px-4 py-2 mt-4 flex items-center justify-between text-sm font-semibold">
-        <span>FLEET BOOKINGS</span>
-        <span className="bg-white/10 rounded px-2 py-0.5 text-xs">{fleetTentative.length}</span>
+        <span>FLEET BOOKINGS — PENDING BRANCH APPROVAL</span>
+        <span className="bg-white/10 rounded px-2 py-0.5 text-xs">{pendingApproval.length}</span>
       </div>
-      {fleetTentative.length === 0 ? (
+      {queueError && (
+        <div className="mt-2 bg-red-50 border border-red-200 text-red-800 rounded px-3 py-2 text-xs">
+          Action failed: {queueError}
+        </div>
+      )}
+      {pendingApproval.length === 0 ? (
         <div className="bg-white rounded-md border mt-2 p-6 text-center text-gray-400 text-sm">
-          No tentative fleet bookings.
+          No fleet bookings waiting for branch approval.
         </div>
       ) : (
         <div className="bg-white rounded-md border mt-2 divide-y">
-          {fleetTentative.map((a) => (
-            <button
-              key={a.id}
-              onClick={() => { setEditId(a.id); setShowPanel(true) }}
-              className="w-full text-left px-4 py-3 hover:bg-amber-50 flex items-center gap-4"
-            >
-              <div className="bg-amber-100 text-amber-800 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Tentative</div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold text-sm text-gray-900">{a.plateNo} · {a.customer || '—'}</div>
-                <div className="text-xs text-gray-500 truncate">
-                  {a.company} · {a.scheduledTime || '—'} · {a.model ? `${a.model} (${a.yearModel || ''})` : ''}
-                </div>
+          {pendingApproval.map((a) => {
+            const acting = queueActing === a.id
+            return (
+              <div key={a.id} className="px-4 py-3 hover:bg-amber-50 flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => { setEditId(a.id); setShowPanel(true) }}
+                  className="flex-1 min-w-0 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="bg-amber-100 text-amber-800 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Pending</div>
+                    <div className="font-semibold text-sm text-gray-900">{a.plateNo} · {a.customer || '—'}</div>
+                  </div>
+                  <div className="text-xs text-gray-500 truncate mt-0.5">
+                    {a.company} · {a.scheduledTime || '—'} · {a.model ? `${a.model} (${a.yearModel || ''})` : ''}
+                  </div>
+                </button>
+                {canReview ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={acting}
+                      onClick={() => onApproveQueue(a.id)}
+                      className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded font-semibold"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={acting}
+                      onClick={() => onRejectQueue(a.id)}
+                      className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-1.5 rounded font-semibold"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-gray-400 shrink-0">Awaiting branch reviewer</div>
+                )}
               </div>
-              <div className="text-[11px] text-gray-400">Awaiting confirmation</div>
-            </button>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -210,6 +265,8 @@ function BookingCard({ appt, onClick }) {
 
 function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const canReview = canReviewAtBranch(profile?.role) || profile?.is_admin
   const existing = editId ? appointments.find((a) => a.id === editId) : null
   const [walkin, setWalkin] = useState(false)
   const [tentative, setTentative] = useState(false)
@@ -257,16 +314,53 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
     }
   }
 
+  const onApprove = async () => {
+    if (!editId) return
+    setStatusActing(true); setError(null)
+    try {
+      await approveBookingAtBranch(editId)
+      onClose()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setStatusActing(false)
+    }
+  }
+
+  const onReject = async () => {
+    if (!editId) return
+    const reason = window.prompt('Reason for rejecting this booking? (optional)') ?? ''
+    if (reason === null) return
+    setStatusActing(true); setError(null)
+    try {
+      await rejectBookingAtBranch(editId, reason.trim() || null)
+      onClose()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setStatusActing(false)
+    }
+  }
+
   const submit = async (e) => {
     e.preventDefault()
     setSaving(true); setError(null)
     try {
+      // Status policy:
+      //   fleet → PENDING_BRANCH_APPROVAL (approval gate, regardless of the
+      //           Tentative checkbox — the gate is the dominant signal)
+      //   non-fleet + tentative checkbox → TENTATIVE (legacy "might not show")
+      //   non-fleet → BOOKED
+      const isFleet = custType === 'fleet'
+      const submitStatus = isFleet
+        ? APPT_STATUS.PENDING_BRANCH_APPROVAL
+        : (tentative ? APPT_STATUS.TENTATIVE : APPT_STATUS.BOOKED)
       await createAppointment({
         plateNo: plate,
         customer,
         customerType: custType,
         mobile,
-        company: custType === 'fleet' ? company : null,
+        company: isFleet ? company : null,
         branch,
         scheduledAt: composeScheduledAt(date, time),
         scheduledTime: time,
@@ -274,7 +368,7 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
         customerIssues: issues,
         tentative,
         walkin,
-        status: tentative ? 'TENTATIVE' : (custType === 'fleet' ? 'TENTATIVE' : 'BOOKED'),
+        status: submitStatus,
         note: 'SERVICE BOOKED',
       })
       onClose()
@@ -293,6 +387,25 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
       {existing && (
         <div className="bg-gray-50 border rounded-md p-2 flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-gray-500 mr-1">STATUS: {existing.status}</span>
+          {existing.status === APPT_STATUS.PENDING_BRANCH_APPROVAL && canReview ? (
+            <>
+              <button type="button" disabled={statusActing}
+                onClick={onApprove}
+                className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-2 py-1 rounded">
+                Approve Booking
+              </button>
+              <button type="button" disabled={statusActing}
+                onClick={onReject}
+                className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-2 py-1 rounded">
+                Reject
+              </button>
+            </>
+          ) : null}
+          {existing.status === APPT_STATUS.PENDING_BRANCH_APPROVAL && !canReview ? (
+            <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+              Waiting on branch reviewer
+            </span>
+          ) : null}
           {existing.status === 'BOOKED' || existing.status === 'CONFIRMED' || existing.status === 'TENTATIVE' ? (
             <button type="button" disabled={statusActing}
               onClick={() => onStatusAction('ARRIVED', 'Vehicle checked in')}

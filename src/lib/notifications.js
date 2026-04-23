@@ -93,6 +93,12 @@ export async function emitNotification(spec) {
       branch: spec.branch || null,
       company: spec.company || null,
       forAdmins: spec.forAdmins !== false,
+      // Optional role targeting — when set, the inbox highlights this notif
+      // for users whose role is in the list. Audience routing (branch/company)
+      // is unchanged; this is a UI hint, not a hard filter.
+      target_roles: Array.isArray(spec.target_roles) && spec.target_roles.length
+        ? spec.target_roles
+        : null,
       readBy: [],
       createdAt: serverTimestamp(),
       createdBy: uid,

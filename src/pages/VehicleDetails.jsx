@@ -3,10 +3,14 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { isClientView } from '../lib/roles'
 import { loadVehicleWithHistory } from '../lib/vehicles'
+import { getActiveAppointmentsByPlate, APPT_STATUS } from '../lib/appointments'
 import { formatDate } from '../lib/dummyData'
 import VehicleImage from '../components/ui/VehicleImage'
 import RoadworthyBadge from '../components/ui/RoadworthyBadge'
+import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 
 // Matches mg-fms-app SC palette (App.jsx:~108) for overallStatus → label/color.
@@ -20,31 +24,50 @@ const statusCfg = (s) => STATUS_CFG[String(s || '').toLowerCase()] || { label: s
 export default function VehicleDetails() {
   const { plateNo } = useParams()
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const clientVisibleOnly = isClientView(profile)
+  const isClient = clientVisibleOnly
   const [state, setState] = useState({ loading: true, vehicle: null, history: [], source: null })
+  const [activeAppts, setActiveAppts] = useState([])
 
   useEffect(() => {
     let cancelled = false
-    loadVehicleWithHistory(plateNo).then((res) => {
+    loadVehicleWithHistory(plateNo, { clientVisibleOnly }).then((res) => {
       if (!cancelled) setState({ loading: false, ...res })
     })
+    // Active bookings live in the portal (not mg-fms) and are useful even when
+    // the vehicle has no assessments yet — they let the user jump back to the
+    // booking flow. Skip for client-view profiles; they don't act on bookings.
+    if (!clientVisibleOnly) {
+      getActiveAppointmentsByPlate(plateNo).then((rows) => {
+        if (!cancelled) setActiveAppts(rows)
+      })
+    }
     return () => { cancelled = true }
-  }, [plateNo])
+  }, [plateNo, clientVisibleOnly])
+
+  const currentAppt = activeAppts[0] || null
 
   const vehicle = state.vehicle
   const history = state.history || []
 
-  if (state.loading) return <div className="p-6 text-gray-500">Loading vehicle…</div>
+  if (state.loading) return <div className="p-4 sm:p-6 text-gray-500">Loading vehicle…</div>
   if (!vehicle) {
     return (
-      <div className="p-6">
-        <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+      <div className="p-4 sm:p-6 space-y-4">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
           <button onClick={() => navigate(-1)} className="hover:underline">← Back</button>
         </div>
+        {currentAppt && !isClient && (
+          <CurrentBookingCard appt={currentAppt} navigate={navigate} />
+        )}
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
-          <div className="font-semibold mb-1">No assessment found for plate {plateNo}</div>
+          <div className="font-semibold mb-1">No assessment on record for plate {plateNo}</div>
           <div className="text-xs">
-            This vehicle hasn't been assessed in the MG-FMS app yet, or the plate number doesn't match any record.
-            Open MG-FMS and run an assessment for this plate — it will appear here on the next sync.
+            {currentAppt
+              ? <>This vehicle has an active booking but hasn't been diagnosed yet. Use the <strong>Diagnose</strong> button above to start an assessment.</>
+              : <>This plate doesn't match any assessment yet. Create a booking from <button onClick={() => navigate('/appointments')} className="underline font-semibold">Service Bookings</button>, then mark it arrived and click Diagnose.</>
+            }
           </div>
         </div>
       </div>
@@ -52,21 +75,25 @@ export default function VehicleDetails() {
   }
 
   return (
-    <div className="p-6 pb-16 space-y-4">
+    <div className="p-3 sm:p-6 pb-16 space-y-4">
       <div className="flex items-center gap-2 text-sm text-gray-500">
         <button onClick={() => navigate(-1)} className="hover:underline">← Back</button>
         {state.source === 'error' && <span className="ml-auto text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-0.5">Read blocked</span>}
       </div>
 
-      <div className="flex items-start justify-between">
-        <h1 className="text-2xl font-semibold text-gray-900">{vehicle.plateNo}</h1>
-        <RoadworthyBadge status={vehicle.roadworthy} />
+      <div className="flex items-start justify-between gap-2">
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-900 truncate">{vehicle.plateNo}</h1>
+        <div className="shrink-0"><RoadworthyBadge status={vehicle.roadworthy} /></div>
       </div>
+
+      {currentAppt && !isClient && (
+        <CurrentBookingCard appt={currentAppt} navigate={navigate} />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title="Vehicle Information" icon={<Icon name="car" className="w-4 h-4" />}>
-          <div className="flex gap-4">
-            <div className="w-40 shrink-0 flex items-center justify-center bg-gray-50 rounded">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="w-full sm:w-40 shrink-0 flex items-center justify-center bg-gray-50 rounded h-32 sm:h-auto">
               <VehicleImage model={vehicle.model} className="max-h-32 object-contain" />
             </div>
             <div className="flex-1 text-sm">
@@ -179,6 +206,61 @@ export default function VehicleDetails() {
           </div>
         )}
       </Card>
+    </div>
+  )
+}
+
+// Compact card for an in-flight booking. Surfaces the next obvious action so
+// the user doesn't have to navigate back to /appointments to continue.
+function CurrentBookingCard({ appt, navigate }) {
+  const canDiagnose = appt.status === APPT_STATUS.ARRIVED || appt.status === APPT_STATUS.ONGOING
+  const canRecordPms = [APPT_STATUS.ARRIVED, APPT_STATUS.ONGOING, APPT_STATUS.DIAGNOSED].includes(appt.status)
+  return (
+    <div className="bg-white border border-blue-200 rounded-md shadow-sm overflow-hidden">
+      <div className="bg-blue-600 text-white px-4 py-2 text-sm font-semibold flex items-center gap-2">
+        <Icon name="calendar" className="w-4 h-4" />
+        Current Booking
+      </div>
+      <div className="p-4 flex items-center gap-4 flex-wrap">
+        <div className="flex-1 min-w-0 text-sm">
+          <div className="flex items-center gap-2 flex-wrap">
+            <StatusPill status={appt.status} size="sm" />
+            <span className="text-gray-700">
+              {formatDate(appt.scheduledAt)}{appt.scheduledTime ? ` · ${appt.scheduledTime}` : ''}
+            </span>
+            {appt.branch && <span className="text-gray-500 text-xs">· {appt.branch}</span>}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">
+            {appt.customer || '—'}{appt.company ? ` · ${appt.company}` : ''}
+            {appt.mechanic && appt.mechanic !== 'Not yet assigned' ? ` · ${appt.mechanic}` : ''}
+          </div>
+          {appt.note && <div className="text-xs text-gray-600 italic mt-1">"{appt.note}"</div>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => navigate('/appointments')}
+            className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded font-semibold"
+          >
+            Open Booking
+          </button>
+          {canDiagnose && (
+            <button
+              onClick={() => navigate(`/appointments/${appt.id}/diagnose`)}
+              className="text-xs bg-red-700 hover:bg-red-800 text-white px-3 py-1.5 rounded font-semibold"
+            >
+              Diagnose →
+            </button>
+          )}
+          {canRecordPms && (
+            <button
+              onClick={() => navigate(`/appointments/${appt.id}/pms`)}
+              className="text-xs bg-green-700 hover:bg-green-800 text-white px-3 py-1.5 rounded font-semibold"
+            >
+              Record PMS →
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

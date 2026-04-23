@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { isClientView } from '../lib/roles'
 import { watchVehicles, profileCompany } from '../lib/vehicles'
 import { fleetStats, pmStats, formatDate } from '../lib/dummyData'
 import StatCard from '../components/ui/StatCard'
@@ -22,21 +23,23 @@ export default function MyFleet() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const clientVisibleOnly = isClientView(profile)
+
   useEffect(() => {
     if (!company) { setVehicles([]); setSource('no-company'); setLoading(false); return () => {} }
     const unsub = watchVehicles(
-      { company },
+      { company, clientVisibleOnly },
       ({ vehicles, source, error, loading }) => {
         setVehicles(vehicles); setSource(source); setLoading(loading); setError(error)
       },
     )
     return unsub
-  }, [company])
+  }, [company, clientVisibleOnly])
 
   if (!company) {
     return (
-      <div className="p-6">
-        <h1 className="text-2xl font-semibold text-gray-800 mb-4">My Fleet</h1>
+      <div className="p-4 sm:p-6">
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-800 mb-4">My Fleet</h1>
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
           <div className="font-semibold mb-1">No fleet company set on your profile</div>
           <div className="text-xs">
@@ -52,9 +55,9 @@ export default function MyFleet() {
   const pm = useMemo(() => pmStats(vehicles), [vehicles])
 
   return (
-    <div className="p-6 pb-16">
-      <div className="flex items-start justify-between mb-5 gap-4">
-        <h1 className="text-2xl font-semibold text-gray-800">My Fleet - {company}</h1>
+    <div className="p-4 sm:p-6 pb-16">
+      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
+        <h1 className="text-xl sm:text-2xl font-semibold text-gray-800 truncate">My Fleet - {company}</h1>
         <DataSource source={source} error={error} />
       </div>
 

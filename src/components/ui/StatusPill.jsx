@@ -2,6 +2,7 @@
 // Matches the status pipeline cards on the staff dashboard.
 
 const STATUS_STYLES = {
+  PENDING_BRANCH_APPROVAL: 'bg-amber-500 text-white',
   BOOKED:     'bg-gray-500 text-white',
   ARRIVED:    'bg-sky-500 text-white',
   DIAGNOSED:  'bg-indigo-500 text-white',
@@ -40,6 +41,7 @@ export function PipelineCard({ label, count, tone = 'gray' }) {
     blue:    'bg-blue-600',
     yellow:  'bg-yellow-500',
     green:   'bg-green-600',
+    amber:   'bg-amber-500',
   }
   const bg = toneMap[tone] || toneMap.gray
   return (

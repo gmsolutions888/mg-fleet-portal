@@ -17,6 +17,7 @@ import { auth, db } from './firebase'
 import { ALL_ITEMS } from './mgfms-catalog'
 import { emitNotification } from './notifications'
 import { trimPhotosToFit } from './photos'
+import { REVIEW_STATUS } from './reviewStatus'
 
 // Single-doc read by id. Returns the assessment doc + id, or null if missing.
 // Used by the PMS form to auto-link "replaced" inspection items into the
@@ -120,6 +121,8 @@ export async function createAssessment({ appointmentId, header, itemResults, pms
     submittedAt: new Date(now).toISOString(),
     appointmentId: appointmentId || null, // portal-only linkage
     createdBy: auth?.currentUser?.uid || null,
+    // Branch admin must approve, then MG Fleet must forward, before clients see it.
+    review_status: REVIEW_STATUS.SUBMITTED,
   }
 
   // Trim photos if the doc exceeds ~900KB, so we stay under Firestore's 1MiB

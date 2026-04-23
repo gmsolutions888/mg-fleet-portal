@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { isClientView } from '../lib/roles'
 import { watchVehicles, profileCompany } from '../lib/vehicles'
 import VehicleImage from '../components/ui/VehicleImage'
 import OverdueChip from '../components/ui/OverdueChip'
@@ -19,19 +20,21 @@ export default function Portal() {
   const [vehicles, setVehicles] = useState([])
   const [source, setSource] = useState('loading')
 
+  const clientVisibleOnly = isClientView(profile)
+
   useEffect(() => {
     if (!company) { setVehicles([]); setSource('no-company'); return () => {} }
-    const unsub = watchVehicles({ company }, ({ vehicles, source }) => {
+    const unsub = watchVehicles({ company, clientVisibleOnly }, ({ vehicles, source }) => {
       setVehicles(vehicles); setSource(source)
     })
     return unsub
-  }, [company])
+  }, [company, clientVisibleOnly])
 
   const { upcoming, overdue } = useMemo(() => splitByPm(vehicles), [vehicles])
 
   if (!company) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
           <div className="font-semibold mb-1">No fleet company set on your profile</div>
           <div className="text-xs">
@@ -44,8 +47,8 @@ export default function Portal() {
   }
 
   return (
-    <div className="p-6 pb-20">
-      <div className="mb-4 bg-sky-50 border border-sky-200 text-sky-900 text-sm rounded-md px-4 py-2 flex items-center gap-2">
+    <div className="p-4 sm:p-6 pb-20">
+      <div className="mb-4 bg-sky-50 border border-sky-200 text-sky-900 text-sm rounded-md px-3 sm:px-4 py-2 flex items-start sm:items-center gap-2 flex-wrap">
         <Icon name="phone" className="w-4 h-4 text-sky-700" />
         <span>
           Need assistance? Call Master Garage's fleet service hotline at{' '}
