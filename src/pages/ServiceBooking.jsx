@@ -13,9 +13,9 @@ import {
   approveBookingAtBranch, rejectBookingAtBranch,
 } from '../lib/appointments'
 import { PMS_ITEMS } from '../lib/mgfms-catalog'
-import StatCard from '../components/ui/StatCard'
 import SlidePanel from '../components/ui/SlidePanel'
 import Icon from '../components/ui/Icon'
+import PageHero, { HeroStat } from '../components/ui/PageHero'
 
 const TIME_SLOTS = [
   '8:00 AM', '8:30 AM', '9:00 AM', '9:30 AM', '10:00 AM', '10:30 AM',
@@ -125,108 +125,130 @@ export default function ServiceBooking() {
     finally { setQueueActing(null) }
   }
 
+  const todayLabel = today.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+
   return (
-    <div className="p-3 sm:p-6 pb-20">
-      <div className="flex items-center justify-between gap-2 mb-4">
-        <h1 className="text-lg sm:text-2xl font-semibold text-gray-800 truncate">Service Booking - {branch}</h1>
-        {source === 'dummy' && <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 shrink-0">Demo data</span>}
-      </div>
+    <div className="pb-24">
+      <PageHero
+        eyebrow="SERVICE BOOKINGS"
+        title={branch}
+        subtitle={todayLabel}
+        right={<HeroStat value={stats.confirmed} label="TODAY" tone="solid" />}
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-        <StatCard label="Backlogs"             value={stats.backlogs}        tone="blue"  icon={<Icon name="backlog" className="w-5 h-5" />} />
-        <StatCard label="Confirmed Bookings"   value={stats.confirmed}       tone="green" icon={<Icon name="check" className="w-5 h-5" />} />
-        <StatCard label="Pending Approval"     value={stats.pendingApproval} tone="amber" icon={<Icon name="clock" className="w-5 h-5" />} />
-      </div>
-
-      <div className="bg-gray-900 text-white rounded-md px-4 py-2 mb-2 flex items-center justify-between text-sm font-semibold">
-        <span>SERVICE CENTER BOOKINGS</span>
-        <span className="bg-white/10 rounded px-2 py-0.5 text-xs">{stats.confirmed}</span>
-      </div>
-
-      <div className="bg-white rounded-md border overflow-hidden">
-        <div className="px-4 py-2 border-b text-sm font-semibold text-gray-700">
-          {today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })}
+      {source === 'dummy' && (
+        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          Showing demo data.
         </div>
-        <div className="overflow-x-auto">
-          <div className="flex">
-            {TIME_SLOTS.map((slot) => (
-              <div key={slot} className="border-r last:border-r-0 w-36 flex-shrink-0">
-                <div className="text-xs font-semibold text-gray-500 text-center py-2 border-b bg-gray-50">{slot}</div>
-                <div className="p-2 space-y-2 min-h-[220px]">
-                  {(slotMap[slot] || []).map((a) => (
-                    <BookingCard key={a.id} appt={a} onClick={() => { setEditId(a.id); setShowPanel(true) }} />
-                  ))}
-                </div>
-              </div>
-            ))}
+      )}
+
+      {/* Floating status tiles overlap the hero for the mg-fms look */}
+      <div className="px-3 sm:px-6 -mt-3 relative z-10">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <SummaryTile label="Backlogs"         value={stats.backlogs}        tone="sky" />
+          <SummaryTile label="Confirmed"        value={stats.confirmed}       tone="green" />
+          <SummaryTile label="Pending approval" value={stats.pendingApproval} tone="amber" />
+        </div>
+      </div>
+
+      <div className="px-3 sm:px-6 pt-5 space-y-5">
+        {/* Service Center Bookings — time slot day view */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Today's Bookings</div>
+            <span className="text-xs text-gray-400">{stats.confirmed} confirmed</span>
           </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-900 text-white rounded-md px-4 py-2 mt-4 flex items-center justify-between text-sm font-semibold">
-        <span>FLEET BOOKINGS — PENDING BRANCH APPROVAL</span>
-        <span className="bg-white/10 rounded px-2 py-0.5 text-xs">{pendingApproval.length}</span>
-      </div>
-      {queueError && (
-        <div className="mt-2 bg-red-50 border border-red-200 text-red-800 rounded px-3 py-2 text-xs">
-          Action failed: {queueError}
-        </div>
-      )}
-      {pendingApproval.length === 0 ? (
-        <div className="bg-white rounded-md border mt-2 p-6 text-center text-gray-400 text-sm">
-          No fleet bookings waiting for branch approval.
-        </div>
-      ) : (
-        <div className="bg-white rounded-md border mt-2 divide-y">
-          {pendingApproval.map((a) => {
-            const acting = queueActing === a.id
-            return (
-              <div key={a.id} className="px-4 py-3 hover:bg-amber-50 flex items-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => { setEditId(a.id); setShowPanel(true) }}
-                  className="flex-1 min-w-0 text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="bg-amber-100 text-amber-800 rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Pending</div>
-                    <div className="font-semibold text-sm text-gray-900">{a.plateNo} · {a.customer || '—'}</div>
+          <div className="bg-white rounded-2xl border overflow-hidden">
+            <div className="overflow-x-auto">
+              <div className="flex">
+                {TIME_SLOTS.map((slot) => (
+                  <div key={slot} className="border-r last:border-r-0 w-36 flex-shrink-0">
+                    <div className="text-xs font-bold text-gray-500 text-center py-2 border-b bg-gray-50">{slot}</div>
+                    <div className="p-2 space-y-2 min-h-[220px]">
+                      {(slotMap[slot] || []).map((a) => (
+                        <BookingCard key={a.id} appt={a} onClick={() => { setEditId(a.id); setShowPanel(true) }} />
+                      ))}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500 truncate mt-0.5">
-                    {a.company} · {a.scheduledTime || '—'} · {a.model ? `${a.model} (${a.yearModel || ''})` : ''}
-                  </div>
-                </button>
-                {canReview ? (
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={acting}
-                      onClick={() => onApproveQueue(a.id)}
-                      className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-1.5 rounded font-semibold"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={acting}
-                      onClick={() => onRejectQueue(a.id)}
-                      className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-1.5 rounded font-semibold"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-gray-400 shrink-0">Awaiting branch reviewer</div>
-                )}
+                ))}
               </div>
-            )
-          })}
-        </div>
-      )}
+            </div>
+          </div>
+        </section>
 
-      <div className="fixed bottom-4 sm:bottom-6 right-4 sm:right-6">
+        {/* Pending Approval queue */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-700 flex items-center gap-1.5">
+              <Icon name="clock" className="w-3.5 h-3.5" />
+              Pending Branch Approval
+            </div>
+            <span className="text-xs text-gray-400">{pendingApproval.length}</span>
+          </div>
+          {queueError && (
+            <div className="mb-2 bg-red-50 border border-red-200 text-red-800 rounded-xl px-3 py-2 text-xs">
+              Action failed: {queueError}
+            </div>
+          )}
+          {pendingApproval.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed p-5 text-center text-gray-400 text-sm">
+              No fleet bookings waiting for branch approval.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {pendingApproval.map((a) => {
+                const acting = queueActing === a.id
+                return (
+                  <div key={a.id} className="bg-white rounded-2xl border-2 border-amber-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => { setEditId(a.id); setShowPanel(true) }}
+                      className="w-full text-left px-4 py-3 hover:bg-amber-50"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="bg-amber-500 text-white rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">Pending</div>
+                        <div className="font-black text-sm text-gray-900">{a.plateNo}</div>
+                        <div className="text-xs text-gray-500 uppercase">· {a.customer || '—'}</div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1.5 break-words">
+                        {a.company}{a.scheduledTime ? ` · ${a.scheduledTime}` : ''}{a.model ? ` · ${a.model}` : ''}{a.yearModel ? ` (${a.yearModel})` : ''}
+                      </div>
+                    </button>
+                    {canReview ? (
+                      <div className="grid grid-cols-2 gap-2 px-4 pb-3">
+                        <button
+                          type="button"
+                          disabled={acting}
+                          onClick={() => onApproveQueue(a.id)}
+                          className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold"
+                        >
+                          ✓ Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={acting}
+                          onClick={() => onRejectQueue(a.id)}
+                          className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold"
+                        >
+                          ✕ Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="px-4 pb-3 text-[11px] text-gray-400 italic">Awaiting branch reviewer</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Floating + New Booking */}
+      <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-20">
         <button
           onClick={() => { setEditId(null); setShowPanel(true) }}
-          className="bg-brand hover:bg-brand-dark text-white rounded-full px-4 sm:px-5 py-3 shadow-lg font-semibold text-sm flex items-center gap-1.5"
+          className="bg-brand hover:bg-brand-dark text-white rounded-full pl-4 pr-5 py-3 shadow-xl font-bold text-sm flex items-center gap-2"
         >
           <Icon name="plus" className="w-4 h-4" />
           New Booking
@@ -242,6 +264,20 @@ export default function ServiceBooking() {
           onClose={() => setShowPanel(false)}
         />
       </SlidePanel>
+    </div>
+  )
+}
+
+function SummaryTile({ label, value, tone }) {
+  const map = {
+    sky:   'bg-sky-500',
+    green: 'bg-green-600',
+    amber: 'bg-amber-500',
+  }
+  return (
+    <div className={`${map[tone]} text-white rounded-2xl px-3 py-2.5 flex items-center justify-between shadow-sm`}>
+      <div className="text-[10px] font-bold tracking-widest opacity-90 leading-tight">{label}</div>
+      <div className="text-2xl font-black leading-none">{value ?? '—'}</div>
     </div>
   )
 }

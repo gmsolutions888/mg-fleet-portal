@@ -206,46 +206,75 @@ export default function DiagnosticForm() {
 
   if (loading) return <div className="p-4 sm:p-6 text-sm text-gray-500">Loading appointment…</div>
 
+  const progressPct = totalItems ? Math.round((answered / totalItems) * 100) : 0
+
   return (
-    <div className="pb-24">
-      <div className="p-3 sm:p-4 flex items-start justify-between gap-3 flex-wrap">
-        <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline shrink-0">← Back</button>
-        <div className="flex items-center gap-2 sm:gap-3 text-xs flex-wrap justify-end">
-          {draftRestored && (
-            <span className="text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5">Draft restored</span>
-          )}
-          {draftSavedAt && (
-            <span className="text-gray-500" title={new Date(draftSavedAt).toLocaleString()}>
-              Draft saved {timeAgo(draftSavedAt)}
-            </span>
-          )}
+    <div className="pb-28">
+      {/* ── Live status banner (uses gradient tied to classification) ─ */}
+      <div className={`bg-gradient-to-b ${sc.grad} text-white px-4 pt-5 pb-5`}>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-[10px] tracking-widest font-bold text-white/60">
+            INSPECTION · {header.plate || '—'}
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            {draftRestored && (
+              <span className="bg-white/15 rounded-full px-2 py-0.5 font-semibold">Draft restored</span>
+            )}
+            {draftSavedAt && (
+              <span className="text-white/70" title={new Date(draftSavedAt).toLocaleString()}>
+                Saved {timeAgo(draftSavedAt)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-end gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-black uppercase tracking-wide text-white/80">Live Classification</div>
+            <div className="text-2xl font-black mt-0.5">{sc.label}</div>
+            <div className="text-xs text-white/70 mt-1">
+              {answered}/{totalItems} items · {classification.failCriticalCount} critical · {classification.monitorCount} monitor
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[9px] font-bold tracking-widest text-white/60">HEALTH</div>
+            <div className={`text-3xl font-black bg-white rounded-xl px-3 py-1 ${hc.text}`}>{score}</div>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-[10px] font-bold tracking-widest text-white/70 mb-1">
+            <span>PROGRESS</span>
+            <span>{progressPct}%</span>
+          </div>
+          <div className="h-1.5 bg-white/20 rounded-full overflow-hidden">
+            <div className="h-full bg-white rounded-full transition-all" style={{ width: `${progressPct}%` }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Context strip (desktop-only) — mobile Topbar already shows title */}
+      <div className="hidden md:flex items-center justify-between px-4 sm:px-6 pt-3 text-xs">
+        <button onClick={() => navigate(-1)} className="text-gray-500 hover:underline">← Back</button>
+        <div className="flex items-center gap-3">
           {(draftSavedAt || draftRestored) && (
             <button onClick={onDiscardDraft} className="text-red-600 hover:underline">Discard draft</button>
           )}
-          {appointment ? (
+          {appointment && (
             <div className="text-gray-500">
               Appt <span className="font-mono">{appointmentId.slice(0, 6)}</span> · {appointment.status}
             </div>
-          ) : (
-            <div className="text-amber-700">Appointment not found — standalone mode</div>
           )}
         </div>
       </div>
 
-      {/* ── Live status banner ───────────────────────────────────── */}
-      <div className={`bg-gradient-to-b ${sc.grad} text-white mx-3 sm:mx-4 rounded-2xl p-4 flex items-center gap-4`}>
-        <div className="flex-1">
-          <div className="text-[10px] tracking-widest opacity-70 font-bold">LIVE CLASSIFICATION</div>
-          <div className="text-lg font-black">{sc.label}</div>
-          <div className="text-xs opacity-80 mt-0.5">
-            {answered}/{totalItems} items · {classification.failCriticalCount} critical · {classification.monitorCount} monitor
-          </div>
+      {/* Mobile discard-draft button (hero hides it) */}
+      {(draftSavedAt || draftRestored) && (
+        <div className="md:hidden px-3 pt-3 flex justify-end">
+          <button onClick={onDiscardDraft} className="text-[11px] text-red-600 font-semibold hover:underline">
+            Discard draft
+          </button>
         </div>
-        <div className="text-right">
-          <div className="text-[10px] opacity-70 font-bold">HEALTH</div>
-          <div className={`text-3xl font-black bg-white rounded-lg px-3 ${hc.text}`}>{score}</div>
-        </div>
-      </div>
+      )}
 
       {/* ── Vehicle & header ─────────────────────────────────────── */}
       <div className="m-3 sm:m-4 bg-white border rounded-xl p-3 sm:p-4">
@@ -291,24 +320,29 @@ export default function DiagnosticForm() {
       </div>
 
       {/* ── Sticky submit bar ───────────────────────────────────── */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-3 flex items-center gap-3">
-        {error && <div className="text-xs text-red-700 flex-1 truncate">Save failed: {error}</div>}
-        <div className={`text-xs flex-1 ${error ? 'hidden' : ''}`}>
+      <div
+        className="fixed bottom-0 left-0 right-0 bg-white border-t px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0))' }}
+      >
+        {error && <div className="text-[11px] text-red-700 flex-1 truncate">Save failed: {error}</div>}
+        <div className={`text-[11px] sm:text-xs flex-1 min-w-0 ${error ? 'hidden' : ''}`}>
           {answered === 0 ? (
-            <span className="text-gray-500">Fill in at least one item to enable submit.</span>
+            <span className="text-gray-500">Rate at least one item to submit.</span>
           ) : (
             <span className="text-gray-700">
-              {answered}/{totalItems} items rated · preview: <span className="font-semibold">{sc.label}</span>
-              {!classification.dispatchAllowed && <span className="text-red-700 font-semibold"> · ⛔ hold</span>}
+              <span className="font-bold">{answered}/{totalItems}</span>
+              <span className="text-gray-500"> · preview: </span>
+              <span className="font-bold">{sc.label}</span>
+              {!classification.dispatchAllowed && <span className="text-red-700 font-bold"> · ⛔ hold</span>}
             </span>
           )}
         </div>
         <button
           onClick={onSubmit}
           disabled={!canSubmit}
-          className="bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-semibold text-sm px-5 py-2 rounded-md"
+          className="bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow active:scale-95 transition-transform shrink-0"
         >
-          {saving ? 'Submitting…' : 'Submit Assessment'}
+          {saving ? 'Submitting…' : 'Submit'}
         </button>
       </div>
     </div>
