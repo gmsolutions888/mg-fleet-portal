@@ -6,7 +6,7 @@
 // shared across admin supervisor / MG Fleet manager / fleet client.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { formatMoney } from '../lib/dummyData'
 import {
@@ -16,6 +16,10 @@ import {
   transitionQuotation, updateQuotationItems, addQuotationRevision,
   addQuotationComment, setReceiptStatus, watchReceiptByCode,
 } from '../lib/serviceReceipts'
+import {
+  canGenerateBranchInvoice, generateBranchInvoice, findInvoiceForQuotation,
+} from '../lib/branchInvoices'
+import { getAssessmentsForPlate } from '../lib/assessments'
 import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
 import StatusPill from '../components/ui/StatusPill'
@@ -52,6 +56,7 @@ export default function ServiceReceiptDetails() {
 // ── Quotation view ───────────────────────────────────────────────────────
 
 function QuotationDetail({ quot, profile }) {
+  const navigate = useNavigate()
   const status = effectiveQuotationStatus(quot)
   const statusLabel = QUOT_STATUS_LABELS[status] || status
   const actions = availableQuotationActions(quot, profile)
@@ -63,6 +68,54 @@ function QuotationDetail({ quot, profile }) {
   const [modalAction, setModalAction] = useState(null)
   const [editMode, setEditMode] = useState(false)
   const [revisionMode, setRevisionMode] = useState(false)
+
+  // Reassessment gate state for the Generate Branch Invoice button. Loaded
+  // once whenever status === APPROVED_FINAL (no point querying before).
+  const [gateState, setGateState] = useState({ loading: true, gate: null, existingInvoice: null })
+  useEffect(() => {
+    if (status !== QUOT_STATUS.APPROVED_FINAL || !quot.plateNo) {
+      setGateState({ loading: false, gate: null, existingInvoice: null })
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [plateAssessments, existingInvoice] = await Promise.all([
+          getAssessmentsForPlate(quot.plateNo),
+          findInvoiceForQuotation(quot.id),
+        ])
+        if (cancelled) return
+        const gate = canGenerateBranchInvoice(quot, plateAssessments)
+        setGateState({ loading: false, gate, existingInvoice, plateAssessments })
+      } catch (err) {
+        if (!cancelled) setGateState({ loading: false, gate: { ok: false, reason: err.message || String(err) }, existingInvoice: null })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [status, quot.plateNo, quot.id])
+
+  // Gate the "Generate Invoice" visibility to finance role + admin (the
+  // branch cashier/finance role actually raises the invoice; admin is the
+  // escape hatch per the shared-admin pattern).
+  const canIssueInvoice = Boolean(
+    profile?.is_admin || profile?.role === 'finance' || profile?.role === 'admin_supervisor' || profile?.role === 'branch_manager',
+  )
+
+  const issueInvoice = async () => {
+    if (busy || !gateState.gate?.ok) return
+    setBusy(true); setError(null)
+    try {
+      const inv = await generateBranchInvoice(quot.id, {
+        byProfile: profile,
+        plateAssessments: gateState.plateAssessments || [],
+      })
+      navigate(`/branch-invoices/${inv.code}`)
+    } catch (err) {
+      console.error('[branchInvoice] generate failed:', err)
+      setError(err.message || String(err))
+      setBusy(false)
+    }
+  }
 
   const onAction = async (action) => {
     if (action.requiresText) { setModalAction(action); return }
@@ -138,6 +191,15 @@ function QuotationDetail({ quot, profile }) {
           </div>
         )}
 
+        {status === QUOT_STATUS.APPROVED_FINAL && (
+          <InvoiceGateCard
+            gateState={gateState}
+            canIssueInvoice={canIssueInvoice}
+            busy={busy}
+            onIssue={issueInvoice}
+          />
+        )}
+
         {canRevise && !revisionMode && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center gap-3">
             <div className="text-2xl leading-none">➕</div>
@@ -209,6 +271,108 @@ function QuotationDetail({ quot, profile }) {
           onSubmit={(text) => runTransition(modalAction, text)}
         />
       )}
+    </div>
+  )
+}
+
+// ── Invoice gate (Round 12) ─────────────────────────────────────────────
+//
+// Three states to render on an APPROVED_FINAL quotation:
+//   1) Already invoiced → show the invoice code with a link.
+//   2) Gate passes → green card + Generate Branch Invoice button.
+//   3) Gate fails → amber/red card with the reason (waiting reassessment,
+//      reassessment deferred, etc.)
+
+function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
+  if (gateState.loading) {
+    return (
+      <div className="bg-white rounded-2xl border px-4 py-3 text-sm text-gray-500">
+        Checking invoice readiness…
+      </div>
+    )
+  }
+
+  const { gate, existingInvoice } = gateState
+
+  if (existingInvoice) {
+    const status = existingInvoice.status || 'OPEN'
+    return (
+      <div className="bg-gray-900 text-white rounded-2xl p-4 flex items-center gap-3">
+        <div className="text-2xl leading-none">🧾</div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-bold tracking-widest uppercase opacity-70">ALREADY INVOICED</div>
+          <div className="font-black text-lg font-mono truncate">{existingInvoice.code}</div>
+          <div className="text-xs opacity-70 mt-0.5">Status: {status}</div>
+        </div>
+        <Link
+          to={`/branch-invoices/${existingInvoice.code}`}
+          className="bg-white text-gray-900 font-bold text-xs px-4 py-2 rounded-full shrink-0"
+        >
+          View invoice →
+        </Link>
+      </div>
+    )
+  }
+
+  if (gate?.ok) {
+    return (
+      <div className="bg-green-50 border-2 border-green-300 rounded-2xl p-4">
+        <div className="flex items-start gap-3">
+          <div className="text-2xl leading-none">✅</div>
+          <div className="flex-1 min-w-0">
+            <div className="font-black text-green-800 text-sm">Ready to invoice MG Fleet</div>
+            <div className="text-xs text-green-700 mt-1">
+              Post-repair reassessment <span className="font-mono font-bold">{gate.reassessment?.rwaNumber}</span>
+              {gate.reassessment?.submittedAt && ` · ${shortDate(gate.reassessment.submittedAt)}`} passed.
+              {gate.reassessment?.classification?.overallStatus && (
+                <> Unit is <strong className="uppercase">{gate.reassessment.classification.overallStatus}</strong>.</>
+              )}
+            </div>
+            {canIssueInvoice ? (
+              <button
+                type="button"
+                onClick={onIssue}
+                disabled={busy}
+                className="mt-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white text-sm font-bold px-5 py-2.5 rounded-full shadow active:scale-95 transition-transform"
+              >
+                {busy ? 'Generating…' : 'Generate branch invoice →'}
+              </button>
+            ) : (
+              <div className="mt-2 text-[11px] text-gray-600">
+                Only finance, admin supervisor, branch manager, or admin can issue the branch invoice.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Gate failed.
+  const isDeferred = /deferred/i.test(gate?.reason || '')
+  const tone = isDeferred ? 'red' : 'amber'
+  const bg = tone === 'red' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'
+  const textTitle = tone === 'red' ? 'text-red-800' : 'text-amber-800'
+  const textBody = tone === 'red' ? 'text-red-700' : 'text-amber-700'
+  return (
+    <div className={`${bg} border-2 rounded-2xl p-4`}>
+      <div className="flex items-start gap-3">
+        <div className="text-2xl leading-none">{tone === 'red' ? '⛔' : '⏳'}</div>
+        <div className="flex-1 min-w-0">
+          <div className={`font-black text-sm ${textTitle}`}>
+            {tone === 'red' ? 'Reassessment blocked invoicing' : 'Not ready to invoice yet'}
+          </div>
+          <div className={`text-xs mt-1 ${textBody}`}>{gate?.reason}</div>
+          {gate?.reassessment?.rwaNumber && (
+            <Link
+              to={`/assessments/${gate.reassessment.rwaNumber}`}
+              className="mt-2 inline-block text-[11px] text-brand font-bold hover:underline"
+            >
+              View reassessment {gate.reassessment.rwaNumber} →
+            </Link>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
