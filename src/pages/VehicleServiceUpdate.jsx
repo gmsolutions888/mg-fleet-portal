@@ -6,6 +6,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { watchAppointments, updateAppointmentStatus } from '../lib/appointments'
 import { watchVehicles } from '../lib/vehicles'
 import { postUpdate, watchUpdatesForPlate } from '../lib/serviceUpdates'
+import { hasApprovedQuotationForPlate } from '../lib/serviceReceipts'
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 
@@ -23,6 +24,10 @@ export default function VehicleServiceUpdate() {
   const [nextStatus, setNextStatus] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  // Round 11 gate: only show ONGOING as a valid next-status when the plate
+  // has an APPROVED_FINAL quotation (fleet bookings only; walk-ins skip).
+  // `null` during the initial check; `true` once we know one way or the other.
+  const [quoteApproved, setQuoteApproved] = useState(null)
 
   useEffect(() => {
     const u1 = watchAppointments({ dummyFallback: true }, ({ rows }) => {
@@ -39,6 +44,17 @@ export default function VehicleServiceUpdate() {
     const u3 = watchUpdatesForPlate(appt.plateNo, ({ rows }) => setUpdates(rows))
     return () => { u2?.(); u3?.() }
   }, [appt?.plateNo])
+
+  // ONGOING gate check — fleet bookings only. Walk-ins auto-pass.
+  useEffect(() => {
+    let cancelled = false
+    if (!appt?.plateNo) { setQuoteApproved(null); return }
+    if (!appt.company) { setQuoteApproved(true); return } // walk-in bypass
+    hasApprovedQuotationForPlate(appt.plateNo).then((ok) => {
+      if (!cancelled) setQuoteApproved(ok)
+    })
+    return () => { cancelled = true }
+  }, [appt?.plateNo, appt?.company])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -109,8 +125,26 @@ export default function VehicleServiceUpdate() {
             <label className="block text-xs text-gray-500 mb-1">Also change appointment status to…</label>
             <select className="input" value={nextStatus} onChange={(e) => setNextStatus(e.target.value)}>
               <option value="">— keep current ({appt.status}) —</option>
-              {TAG_OPTIONS.filter((t) => t !== 'POST').map((t) => <option key={t} value={t}>{t}</option>)}
+              {TAG_OPTIONS.filter((t) => t !== 'POST').map((t) => {
+                const isBlocked = t === 'ONGOING' && quoteApproved === false
+                return (
+                  <option key={t} value={t} disabled={isBlocked}>
+                    {t}{isBlocked ? ' — blocked (quotation not approved)' : ''}
+                  </option>
+                )
+              })}
             </select>
+            {nextStatus !== 'ONGOING' && quoteApproved === false && (
+              <div className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                Repair can't start yet — this plate has no approved quotation. Have the admin supervisor
+                forward the quotation through MG Fleet to the client for approval first.
+              </div>
+            )}
+            {nextStatus === 'ONGOING' && quoteApproved === false && (
+              <div className="mt-2 text-[11px] text-red-800 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                Quotation must be APPROVED before moving to ONGOING.
+              </div>
+            )}
           </div>
 
           {error && <div className="text-red-600 text-xs">Save failed: {error}</div>}

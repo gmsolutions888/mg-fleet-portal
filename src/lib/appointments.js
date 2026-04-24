@@ -8,6 +8,7 @@ import {
 import { auth, db } from './firebase'
 import { APPOINTMENTS as DUMMY } from './dummyData'
 import { emitNotification, fetchContextDoc } from './notifications'
+import { hasApprovedQuotationForPlate } from './serviceReceipts'
 
 const COLLECTION = 'appointments'
 
@@ -97,6 +98,21 @@ export async function createAppointment(payload) {
 export async function updateAppointmentStatus(id, nextStatus, note) {
   if (!db) throw new Error('Firestore not configured.')
   const uid = auth?.currentUser?.uid || null
+
+  // Round 11 gate — repair can only start on a fleet booking when the plate
+  // has at least one APPROVED_FINAL quotation. Walk-ins (no company) skip
+  // the gate by design. Pre-flight check so the UI gets a clear error before
+  // Firestore gets the write.
+  if (nextStatus === APPT_STATUS.ONGOING) {
+    const current = await fetchContextDoc(COLLECTION, id)
+    if (current?.company) {
+      const approved = await hasApprovedQuotationForPlate(current.plateNo)
+      if (!approved) {
+        throw new Error('Cannot start repair: the quotation for this plate has not been fully approved yet.')
+      }
+    }
+  }
+
   await updateDoc(doc(db, COLLECTION, id), {
     status: nextStatus,
     ...(note ? { note } : {}),
