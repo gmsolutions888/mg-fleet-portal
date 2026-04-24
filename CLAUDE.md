@@ -273,18 +273,16 @@ Portal data layer lives in `src/lib/` — `appointments.js`, `vehicles.js`,
 
 `firebase.json` exists at the repo root (portal deploy config).
 
-**Still needed** (ordered by pipeline relevance):
-1. Port the mg-fms **Inspection Form** into `/appointments/:id/diagnose` —
-   currently a `Placeholder`. Write to `assessments` (same collection mg-fms
-   writes) using `mgfms-catalog` verbatim.
-2. Port the **PMS record UI** (same collection `pms_records`).
-3. Assign-mechanic page (`/appointments/:id/assign` — lib helper
-   `assignMechanic` already exists).
-4. Quick Fix + full Re-Assessment flows from mg-fms.
-5. Analytics dashboard (PMS urgency, critical defects).
-6. Supervisor override flow.
-7. Replace hardcoded vehicle registry (`src/lib/dummyVehicles.js`) with an
-   auto-built registry from `assessments` history (mg-fms pattern).
+**Shipped (was in the original "still needed" list):**
+1. ✅ mg-fms **Inspection Form** — `/appointments/:id/assess` (`AssessmentForm.jsx`, Round 7 = full parity). `/diagnose` URLs redirect.
+2. ✅ **PMS record UI** — `/appointments/:id/pms` (`PmsRecord.jsx`).
+3. ✅ Assign-mechanic page — `/appointments/:id/assign` (`AssignMechanic.jsx`).
+4. ✅ Quick Fix + full Re-Assessment flows (`QuickFixForm.jsx` + Re-Assessment mode picker in `AssessmentForm.jsx`).
+7. ✅ Vehicle registry is auto-built from `assessments` + `pms_records` via `watchVehicles` (`src/lib/vehicles.js`). No dummy fallback anymore — empty reads render an empty state.
+
+**Still needed:**
+5. Analytics dashboard (PMS urgency, critical defects) — `Reports.jsx` currently renders static tiles.
+6. Supervisor override flow — for deferred assessments whose dispatch is blocked, a supervisor should be able to clear the unit with a reason stamp.
 
 ---
 
