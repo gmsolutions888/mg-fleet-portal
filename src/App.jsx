@@ -24,6 +24,7 @@ import VehicleServiceUpdate from './pages/VehicleServiceUpdate'
 import AssessmentView from './pages/AssessmentView'
 import AssessmentForm from './pages/AssessmentForm'
 import PmsRecord from './pages/PmsRecord'
+import AssignMechanic from './pages/AssignMechanic'
 
 import Quotations from './pages/Quotations'
 import ServiceReceipts from './pages/ServiceReceipts'
@@ -67,7 +68,7 @@ export default function App() {
           {/* Back-compat: old /diagnose URLs bookmarked or linked from Firestore notifications. */}
           <Route path="/appointments/:id/diagnose"   element={<DiagnoseRedirect />} />
           <Route path="/appointments/:id/pms"        element={<ProtectedRoute allowedCategories={INTERNAL}><PmsRecord /></ProtectedRoute>} />
-          <Route path="/appointments/:id/assign"     element={<ProtectedRoute allowedCategories={INTERNAL}>{ph('Assign Mechanic', 'Assign or reassign the mechanic for this appointment.')}</ProtectedRoute>} />
+          <Route path="/appointments/:id/assign"     element={<ProtectedRoute allowedCategories={INTERNAL}><AssignMechanic /></ProtectedRoute>} />
 
           {/* Quotations */}
           <Route path="/quotations"            element={<ProtectedRoute allowedCategories={INTERNAL}><Quotations /></ProtectedRoute>} />
