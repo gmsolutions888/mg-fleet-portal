@@ -180,6 +180,7 @@ function toVehicle(assessment, pmsRecord) {
     bookedBranch: null,
     overdueDays: overdueDays(nextPms),
     classification: cls,
+    supervisorCleared: Boolean(assessment?.supervisorCleared),
     _raw: assessment,
   }
 }

@@ -265,7 +265,9 @@ function computeStats(vehicles) {
       if (!isNaN(t) && t - now <= THIRTY_DAYS && t >= now) pmsDueSoon.push(v)
     }
 
-    if (v.classification?.dispatchAllowed === false) dispatchBlocked.push(v)
+    // Supervisor-cleared units are intentionally excluded — the override is
+    // the resolution; analytics should show outstanding blockers only.
+    if (v.classification?.dispatchAllowed === false && !v.supervisorCleared) dispatchBlocked.push(v)
     if (v.classification?.reassessmentRequired) reassess.push(v)
   }
 

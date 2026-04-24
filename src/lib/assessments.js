@@ -80,6 +80,62 @@ export async function getOutstandingDeferredForPlate(plateRaw) {
   }
 }
 
+// Supervisor override — lets a branch admin release a unit whose assessment
+// was flagged dispatch-blocked, by stamping a clearance record on the
+// assessment doc. The original `classification.dispatchAllowed: false` is
+// preserved on purpose so the audit trail stays honest ("originally blocked,
+// overridden by X on Y") — consumers gate on `supervisorCleared` separately.
+//
+// Field names match what AssessmentView already renders for historic cleared
+// units (supervisorName / supervisorTs / supervisorRemarks) so mg-fms can
+// keep displaying either side's overrides.
+//
+// payload: { name, remarks }
+//   remarks is required (the "why") and trimmed before write.
+//
+// Internal-only — no fleet-client notification on override.
+export async function clearDispatchBySupervisor(assessmentDocId, { name, remarks }) {
+  if (!db) throw new Error('Firestore not configured.')
+  if (!assessmentDocId) throw new Error('Missing assessment id.')
+  const reason = (remarks || '').trim()
+  if (!reason) throw new Error('A reason is required for supervisor override.')
+
+  const uid = auth?.currentUser?.uid || null
+  const nowIso = new Date().toISOString()
+
+  await updateDoc(doc(db, 'assessments', assessmentDocId), sanitizeForFirestore({
+    supervisorCleared: true,
+    supervisorClearedBy: uid,
+    supervisorName: name || null,
+    supervisorTs: nowIso,
+    supervisorRemarks: reason,
+  }))
+
+  // Re-fetch so the notification body can quote the plate + RWA. Failure here
+  // is non-fatal; the override already landed.
+  try {
+    const snap = await getDoc(doc(db, 'assessments', assessmentDocId))
+    if (snap.exists()) {
+      const a = snap.data()
+      emitNotification({
+        kind: 'status',
+        title: `⚠ Manual clearance — ${a.header?.plate || 'unit'}`,
+        body: `${a.rwaNumber || ''} cleared by ${name || 'supervisor'}: ${reason.slice(0, 120)}`.trim(),
+        plateNo: a.header?.plate || null,
+        appointmentId: a.appointmentId || null,
+        link: `/assessments/${a.rwaNumber || ''}`,
+        branch: a.header?.branch || null,
+        // Internal audit only — do NOT notify the fleet client on manual override.
+        company: null,
+      })
+    }
+  } catch (err) {
+    console.warn('[assessments] override notification skipped:', err?.message || err)
+  }
+
+  return { id: assessmentDocId, at: nowIso, reason }
+}
+
 // Stamp resolvedByRwa / resolvedAt onto a list of assessment docs. Returns
 // the count of writes that succeeded. Doesn't throw on individual failures —
 // we don't want one bad doc to block the main re-assessment submit.

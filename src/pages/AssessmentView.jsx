@@ -12,6 +12,7 @@ import { db } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
 import { isClientView } from '../lib/roles'
 import { isVisibleToClient, statusBadge } from '../lib/reviewStatus'
+import { clearDispatchBySupervisor } from '../lib/assessments'
 import {
   ALL_ITEMS, CATEGORIES, DEFECT_CODES, PMS_ITEMS, SC, ACTION_CFG,
   calcHealthScore, healthColor, getAction,
@@ -35,6 +36,7 @@ export default function AssessmentView() {
   const { profile } = useAuth()
   const clientView = isClientView(profile)
   const [state, setState] = useState({ loading: true, assessment: null, error: null })
+  const [overrideOpen, setOverrideOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -84,6 +86,25 @@ export default function AssessmentView() {
   const score = calcHealthScore(cls, a.itemResults || {})
   const hc = healthColor(score)
 
+  const isAdmin = Boolean(profile?.is_admin)
+  const canOverride = isAdmin && cls.dispatchAllowed === false && !a.supervisorCleared
+
+  const applyOverride = ({ name, ts, remarks }) => {
+    // Merge locally so the page shows the green "Supervisor Override Applied"
+    // card right away. A re-fetch would add a round-trip for no new data.
+    setState((s) => ({
+      ...s,
+      assessment: {
+        ...s.assessment,
+        supervisorCleared: true,
+        supervisorName: name,
+        supervisorTs: ts,
+        supervisorRemarks: remarks,
+      },
+    }))
+    setOverrideOpen(false)
+  }
+
   const findings = ALL_ITEMS.filter((i) => {
     const r = a.itemResults?.[i.code]
     return r?.resultCode === 'fail_critical' || r?.resultCode === 'monitor' || r?.resultCode === 'replaced'
@@ -125,6 +146,30 @@ export default function AssessmentView() {
       </div>
 
       <div className="px-3 sm:px-4 pt-4 space-y-4">
+        {/* ── Supervisor override CTA (admins, still-blocked units only) ─ */}
+        {canOverride && (
+          <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl leading-none">⛔</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-black text-red-800 text-sm">Dispatch blocked</div>
+                <div className="text-xs text-red-700 mt-1">
+                  This unit failed one or more critical items. If you've inspected it in person and are
+                  authorising its release, stamp an override with a written reason — the audit trail is
+                  preserved.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOverrideOpen(true)}
+                  className="mt-3 bg-red-700 hover:bg-red-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow"
+                >
+                  Supervisor override →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Vehicle & inspection header ─────────────────────────── */}
         <Card>
           <CardTitle>Vehicle & Inspection</CardTitle>
@@ -308,6 +353,91 @@ export default function AssessmentView() {
             </div>
           </div>
         )}
+      </div>
+
+      {overrideOpen && (
+        <OverrideModal
+          assessment={a}
+          profile={profile}
+          onClose={() => setOverrideOpen(false)}
+          onSaved={applyOverride}
+        />
+      )}
+    </div>
+  )
+}
+
+// Supervisor override modal — required reason, confirm button, disables itself
+// while the write is in flight so a double-tap can't create two audit rows.
+function OverrideModal({ assessment, profile, onClose, onSaved }) {
+  const [reason, setReason] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const displayName = profile?.user_fullname || profile?.user_name || profile?.name || 'Supervisor'
+
+  const submit = async () => {
+    if (saving) return
+    const trimmed = reason.trim()
+    if (!trimmed) { setError('Please state a reason before confirming.'); return }
+    setSaving(true); setError(null)
+    try {
+      const { at } = await clearDispatchBySupervisor(assessment._docId, { name: displayName, remarks: trimmed })
+      onSaved({ name: displayName, ts: at, remarks: trimmed })
+    } catch (err) {
+      console.error('[override] failed:', err)
+      setError(err.message || String(err))
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white w-full sm:w-[480px] sm:max-w-full rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <div className="font-bold text-gray-900">Supervisor override</div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-2xl leading-none w-8 h-8 flex items-center justify-center" aria-label="Close">×</button>
+        </div>
+        <div className="p-4 space-y-3 overflow-auto">
+          <div className="bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg px-3 py-2">
+            Releasing <span className="font-mono font-bold">{assessment.rwaNumber}</span> — {assessment.header?.plate}.
+            The classification stays "dispatch blocked" for audit; this override adds a clearance record on top.
+          </div>
+          <div>
+            <label className="text-[11px] font-bold text-gray-600 tracking-widest uppercase">Reason for clearance</label>
+            <textarea
+              rows={4}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Re-inspected in person; brakes are within spec after on-site bleed. Releasing for client pickup."
+              className="input mt-1"
+              disabled={saving}
+            />
+          </div>
+          <div className="text-[11px] text-gray-500">
+            Signed as <span className="font-semibold text-gray-700">{displayName}</span>. Internal notification only —
+            the fleet client is not pinged on manual clearances.
+          </div>
+          {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">Save failed: {error}</div>}
+        </div>
+        <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="text-sm font-bold text-gray-600 hover:text-gray-900 disabled:opacity-50 px-3 py-2"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={saving || !reason.trim()}
+            className="bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-full shadow"
+          >
+            {saving ? 'Clearing…' : 'Confirm override'}
+          </button>
+        </div>
       </div>
     </div>
   )

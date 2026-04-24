@@ -269,20 +269,21 @@ Customers, Mechanics, Services, Reports, and `admin/` (FleetCompanies, Users).
 Portal data layer lives in `src/lib/` — `appointments.js`, `vehicles.js`,
 `customers.js` (via dummyData), `serviceReceipts.js`, `serviceUpdates.js`,
 `notifications.js`, `users.js`, `fleetCompanies.js`, `invites.js`,
-`mgfms-catalog.js`, and dummy fallbacks `dummyData.js` / `dummyVehicles.js`.
+`mgfms-catalog.js`, with `dummyData.js` as fallback for the collections that
+aren't fully wired to Firestore yet (mechanics, customers).
 
 `firebase.json` exists at the repo root (portal deploy config).
 
-**Shipped (was in the original "still needed" list):**
-1. ✅ mg-fms **Inspection Form** — `/appointments/:id/assess` (`AssessmentForm.jsx`, Round 7 = full parity). `/diagnose` URLs redirect.
-2. ✅ **PMS record UI** — `/appointments/:id/pms` (`PmsRecord.jsx`).
-3. ✅ Assign-mechanic page — `/appointments/:id/assign` (`AssignMechanic.jsx`).
-4. ✅ Quick Fix + full Re-Assessment flows (`QuickFixForm.jsx` + Re-Assessment mode picker in `AssessmentForm.jsx`).
-7. ✅ Vehicle registry is auto-built from `assessments` + `pms_records` via `watchVehicles` (`src/lib/vehicles.js`). No dummy fallback anymore — empty reads render an empty state.
+**Port roadmap — all shipped.** The mg-fms ports and missing-workflow items
+that had been tracked here are all in production:
 
-**Still needed:**
-5. Analytics dashboard (PMS urgency, critical defects) — `Reports.jsx` currently renders static tiles.
-6. Supervisor override flow — for deferred assessments whose dispatch is blocked, a supervisor should be able to clear the unit with a reason stamp.
+1. ✅ Inspection Form — `/appointments/:id/assess` (`AssessmentForm.jsx`, Round 7 = full mg-fms parity). `/diagnose` URLs redirect.
+2. ✅ PMS record UI — `/appointments/:id/pms` (`PmsRecord.jsx`).
+3. ✅ Assign-mechanic page — `/appointments/:id/assign` (`AssignMechanic.jsx`).
+4. ✅ Quick Fix + Re-Assessment flows — `QuickFixForm.jsx` + Re-Assessment mode picker in `AssessmentForm.jsx`.
+5. ✅ Analytics dashboard — `Reports.jsx` (PMS urgency, critical defects, reassessment due, company breakdown, all derived from `watchVehicles`).
+6. ✅ Supervisor override flow — admin-gated CTA on `AssessmentView` with reason-stamp modal; writes via `lib/assessments.clearDispatchBySupervisor`. Preserves `classification.dispatchAllowed` for audit; analytics filter on `supervisorCleared` instead.
+7. ✅ Vehicle registry auto-built from `assessments` + `pms_records` via `watchVehicles` (`src/lib/vehicles.js`). No dummy fallback — empty reads render an empty state.
 
 ---
 
