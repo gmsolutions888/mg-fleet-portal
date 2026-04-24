@@ -1,89 +1,140 @@
-// Service Quotations list — both staff and customer view. Customer view shows
-// Approve/Reject for fleet_manager users with quotation_approver=true.
+// Service Quotations list — 3-party approval chain (Round 10).
 //
-// Mobile: card-per-quotation layout with one-tap Approve/Reject buttons
-// (the daily customer action — biggest reason this page exists).
-// Desktop: keeps the paginated table.
+// Customer view: only shows quotations that have been forwarded to the client
+// (FOR_CLIENT_REVIEW / CLIENT_CLARIFICATION / CLIENT_REJECTED / APPROVED_FINAL).
+// Big tap targets for Approve / Reject / Clarify on mobile.
+//
+// Staff view: every quotation in every status, so admin supervisors and MG
+// Fleet managers can see what's sitting in their queue. Each row surfaces
+// the single most relevant action based on the actor's role.
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { formatDate, formatMoney } from '../lib/dummyData'
-import { watchReceipts, setReceiptStatus } from '../lib/serviceReceipts'
+import {
+  QUOT_STATUS, QUOT_STATUS_LABELS, QUOT_ACTION,
+  availableQuotationActions, effectiveQuotationStatus,
+  transitionQuotation, watchReceipts,
+} from '../lib/serviceReceipts'
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
-import { canApproveQuotations, isCustomer } from '../lib/roles'
+import { isCustomer } from '../lib/roles'
 import { profileCompany } from '../lib/vehicles'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
 
-const STATUS_TABS = [
-  { key: 'OPEN',        label: 'Open' },
-  { key: 'APPROVED',    label: 'Approved' },
-  { key: 'DISAPPROVED', label: 'Rejected' },
-  { key: 'PAID',        label: 'Paid' },
-  { key: 'ALL',         label: 'All' },
+// Customer-visible statuses. Anything earlier than FOR_CLIENT_REVIEW is
+// internal to MG Fleet + the branch.
+const CUSTOMER_STATUSES = new Set([
+  QUOT_STATUS.FOR_CLIENT_REVIEW,
+  QUOT_STATUS.CLIENT_CLARIFICATION,
+  QUOT_STATUS.CLIENT_REJECTED,
+  QUOT_STATUS.APPROVED_FINAL,
+])
+
+const STAFF_TABS = [
+  { key: 'NEEDS_ACTION',                label: 'Needs action' },
+  { key: QUOT_STATUS.DRAFT,             label: 'Draft' },
+  { key: QUOT_STATUS.FOR_MG_FLEET_REVIEW, label: 'MG Fleet' },
+  { key: QUOT_STATUS.FOR_CLIENT_REVIEW,   label: 'Client' },
+  { key: QUOT_STATUS.CLIENT_CLARIFICATION, label: 'Clarify' },
+  { key: QUOT_STATUS.APPROVED_FINAL,    label: 'Approved' },
+  { key: QUOT_STATUS.CLIENT_REJECTED,   label: 'Rejected' },
+  { key: 'ALL',                         label: 'All' },
+]
+
+const CUSTOMER_TABS = [
+  { key: QUOT_STATUS.FOR_CLIENT_REVIEW,    label: 'For review' },
+  { key: QUOT_STATUS.CLIENT_CLARIFICATION, label: 'Clarifying' },
+  { key: QUOT_STATUS.APPROVED_FINAL,       label: 'Approved' },
+  { key: QUOT_STATUS.CLIENT_REJECTED,      label: 'Rejected' },
+  { key: 'ALL',                            label: 'All' },
 ]
 
 export default function Quotations({ unbilledOnly = false, customerView: customerViewProp }) {
   const { profile } = useAuth()
   const customerView = customerViewProp ?? isCustomer(profile?.role)
-  const canApprove = canApproveQuotations(profile?.role) || profile?.quotation_approver === true
-  const companyFilter = customerView ? (profileCompany(profile) || 'PUREFOODS').toUpperCase() : null
+  const companyFilter = customerView ? (profileCompany(profile) || '').toString() : null
 
   const [rows, setRows] = useState([])
   const [source, setSource] = useState('loading')
   const [search, setSearch] = useState('')
-  const [status, setStatus] = useState('OPEN')
+  const [statusTab, setStatusTab] = useState(customerView ? QUOT_STATUS.FOR_CLIENT_REVIEW : 'NEEDS_ACTION')
   const [busy, setBusy] = useState(null)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    const unsub = watchReceipts(
-      companyFilter
-        ? { kind: 'quotation', company: companyFilter, dummyFallback: true }
-        : { kind: 'quotation', dummyFallback: true },
-      ({ rows, source }) => {
-        const shaped = rows.map((r) => ({ ...r, code: r.code.startsWith('Q-') ? r.code.replace('Q-', 'SQ-') : r.code, kind: 'quotation' }))
-        setRows(shaped); setSource(source)
-      },
-    )
+    const opts = { kind: 'quotation', dummyFallback: true }
+    if (companyFilter) opts.company = companyFilter
+    const unsub = watchReceipts(opts, ({ rows, source }) => {
+      setRows(rows); setSource(source)
+    })
     return unsub
   }, [companyFilter])
 
+  // Apply customer visibility filter once, then filter UI the rest downstream.
+  const visible = useMemo(() => {
+    if (!customerView) return rows
+    return rows.filter((r) => CUSTOMER_STATUSES.has(effectiveQuotationStatus(r)))
+  }, [rows, customerView])
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return rows.filter((q) => {
-      if (status !== 'ALL' && q.status !== status) return false
-      if (unbilledOnly && q.status === 'PAID') return false
+    return visible.filter((q) => {
+      const s = effectiveQuotationStatus(q)
+      if (statusTab === 'NEEDS_ACTION') {
+        const actions = availableQuotationActions(q, profile)
+        if (actions.length === 0) return false
+      } else if (statusTab !== 'ALL' && s !== statusTab) {
+        return false
+      }
+      if (unbilledOnly && s === QUOT_STATUS.APPROVED_FINAL) return false
       if (!term) return true
-      return [q.code, q.plateNo, q.customer].join(' ').toLowerCase().includes(term)
+      return [q.code, q.plateNo, q.customer].filter(Boolean).join(' ').toLowerCase().includes(term)
     })
-  }, [rows, search, status, unbilledOnly])
+  }, [visible, search, statusTab, unbilledOnly, profile])
 
-  // Count per status for the tab badges.
   const counts = useMemo(() => {
-    const c = { OPEN: 0, APPROVED: 0, DISAPPROVED: 0, PAID: 0, ALL: 0 }
-    for (const q of rows) {
-      if (unbilledOnly && q.status === 'PAID') continue
-      c.ALL++
-      if (c[q.status] != null) c[q.status]++
+    const c = {
+      NEEDS_ACTION: 0,
+      ALL: visible.length,
+      [QUOT_STATUS.DRAFT]: 0,
+      [QUOT_STATUS.FOR_MG_FLEET_REVIEW]: 0,
+      [QUOT_STATUS.FOR_CLIENT_REVIEW]: 0,
+      [QUOT_STATUS.CLIENT_CLARIFICATION]: 0,
+      [QUOT_STATUS.APPROVED_FINAL]: 0,
+      [QUOT_STATUS.CLIENT_REJECTED]: 0,
+    }
+    for (const q of visible) {
+      const s = effectiveQuotationStatus(q)
+      if (c[s] != null) c[s]++
+      if (availableQuotationActions(q, profile).length > 0) c.NEEDS_ACTION++
     }
     return c
-  }, [rows, unbilledOnly])
+  }, [visible, profile])
 
-  const doStatus = async (q, nextStatus) => {
-    if (!q.id) return
-    setBusy(q.id)
+  const tabs = customerView ? CUSTOMER_TABS : STAFF_TABS
+
+  const runAction = async (q, action) => {
+    if (!q.id || busy) return
+    setBusy(q.id); setError(null)
     try {
-      await setReceiptStatus(q.id, nextStatus)
+      await transitionQuotation(q.id, {
+        action: action.key,
+        nextStatus: action.nextStatus,
+        text: action.text || null,
+        byProfile: profile,
+      })
     } catch (err) {
-      alert('Failed: ' + (err.message || err))
+      console.error('[quotation] transition failed:', err)
+      setError(err.message || String(err))
     } finally {
       setBusy(null)
     }
   }
 
   const title = unbilledOnly ? 'Services for Quotation' : 'Service Quotations'
-  const needsAction = customerView && canApprove ? rows.filter((q) => q.status === 'OPEN').length : 0
+  const needsActionCount = counts.NEEDS_ACTION
 
   return (
     <div className="pb-24">
@@ -91,9 +142,9 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
         eyebrow={unbilledOnly ? 'SERVICES FOR QUOTATION' : 'QUOTATIONS'}
         title={title}
         subtitle={customerView
-          ? (needsAction > 0 ? `${needsAction} awaiting your approval` : 'All caught up')
-          : `${rows.length} total`}
-        right={<HeroStat value={customerView ? needsAction : rows.length} label={customerView ? 'TO REVIEW' : 'TOTAL'} tone="solid" />}
+          ? (needsActionCount > 0 ? `${needsActionCount} awaiting your response` : 'All caught up')
+          : `${visible.length} total · ${needsActionCount} need your action`}
+        right={<HeroStat value={needsActionCount} label="TO ACT" tone="solid" />}
       />
 
       {source === 'dummy' && (
@@ -101,20 +152,25 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
           Showing demo data.
         </div>
       )}
+      {error && (
+        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          Action failed: {error}
+        </div>
+      )}
 
       <div className="px-3 sm:px-6 pt-4 space-y-4">
-        {/* Status tabs — horizontal scroll chips */}
+        {/* Status tabs */}
         <div className="flex gap-1.5 overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 pb-1">
-          {STATUS_TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.key}
-              onClick={() => setStatus(t.key)}
+              onClick={() => setStatusTab(t.key)}
               className={`shrink-0 text-xs font-bold px-3 py-2 rounded-full whitespace-nowrap transition-colors ${
-                status === t.key ? 'bg-brand text-white' : 'bg-white border text-gray-700'
+                statusTab === t.key ? 'bg-brand text-white' : 'bg-white border text-gray-700'
               }`}
             >
               {t.label}
-              <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${status === t.key ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>
+              <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${statusTab === t.key ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>
                 {counts[t.key] ?? 0}
               </span>
             </button>
@@ -143,10 +199,9 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
             <QuotationCard
               key={q.id || q.code}
               q={q}
-              canApprove={customerView && canApprove}
+              profile={profile}
               busy={busy === q.id}
-              onApprove={() => doStatus(q, 'APPROVED')}
-              onReject={() => doStatus(q, 'DISAPPROVED')}
+              onAction={(action) => runAction(q, action)}
             />
           ))}
         </div>
@@ -170,27 +225,41 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
                 {filtered.length === 0 && (
                   <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No quotations.</td></tr>
                 )}
-                {filtered.map((q) => (
-                  <tr key={q.id || q.code} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 font-mono font-semibold text-brand">{q.code}</td>
-                    <td className="px-4 py-2">{formatDate(q.dateCreated)}</td>
-                    <td className="px-4 py-2">
-                      <Link to={`/vehicles/${q.plateNo}`} className="font-semibold hover:underline">{q.plateNo}</Link>
-                    </td>
-                    <td className="px-4 py-2 uppercase">{q.customer}</td>
-                    <td className="px-4 py-2 text-right font-semibold">{formatMoney(q.estimatedTotal)}</td>
-                    <td className="px-4 py-2 text-right"><StatusPill status={q.status} size="sm" /></td>
-                    <td className="px-4 py-2 text-right text-xs whitespace-nowrap">
-                      <Link to={`/service-receipts/${q.code.replace('SQ-', 'Q-')}`} className="text-brand hover:underline">View</Link>
-                      {customerView && canApprove && q.status === 'OPEN' && (
-                        <>
-                          <button disabled={busy === q.id} onClick={() => doStatus(q, 'APPROVED')} className="ml-3 text-green-600 hover:underline disabled:opacity-40">Approve</button>
-                          <button disabled={busy === q.id} onClick={() => doStatus(q, 'DISAPPROVED')} className="ml-3 text-red-500 hover:underline disabled:opacity-40">Reject</button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((q) => {
+                  const status = effectiveQuotationStatus(q)
+                  const actions = availableQuotationActions(q, profile)
+                  return (
+                    <tr key={q.id || q.code} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 font-mono font-semibold text-brand">{q.code}</td>
+                      <td className="px-4 py-2">{formatDate(q.dateCreated)}</td>
+                      <td className="px-4 py-2">
+                        <Link to={`/vehicles/${q.plateNo}`} className="font-semibold hover:underline">{q.plateNo}</Link>
+                      </td>
+                      <td className="px-4 py-2 uppercase">{q.customer}</td>
+                      <td className="px-4 py-2 text-right font-semibold">{formatMoney(q.estimatedTotal)}</td>
+                      <td className="px-4 py-2 text-right">
+                        <StatusPill status={QUOT_STATUS_LABELS[status] || status} size="sm" />
+                      </td>
+                      <td className="px-4 py-2 text-right text-xs whitespace-nowrap">
+                        <Link to={`/service-receipts/${q.code}`} className="text-brand hover:underline">View</Link>
+                        {actions.length === 1 && !actions[0].requiresText && (
+                          <button
+                            disabled={busy === q.id}
+                            onClick={() => runAction(q, actions[0])}
+                            className="ml-3 text-brand font-semibold hover:underline disabled:opacity-40"
+                          >
+                            {actions[0].label}
+                          </button>
+                        )}
+                        {(actions.length > 1 || (actions.length === 1 && actions[0].requiresText)) && (
+                          <Link to={`/service-receipts/${q.code}`} className="ml-3 text-brand font-semibold hover:underline">
+                            Act →
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -209,19 +278,30 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
   )
 }
 
-// Mobile quotation card — the money line is prominent, approve/reject are
-// oversized tap targets (customer-facing daily action).
-function QuotationCard({ q, canApprove, busy, onApprove, onReject }) {
-  const isOpen = q.status === 'OPEN'
-  const showActions = canApprove && isOpen
+// Mobile quotation card. For actions that don't need text (e.g. "Forward to
+// MG Fleet", "Approve"), render inline buttons; actions that need text
+// (Reject, Clarify, Bounce) kick over to the detail view where the full
+// comment thread lives.
+function QuotationCard({ q, profile, busy, onAction }) {
+  const status = effectiveQuotationStatus(q)
+  const statusLabel = QUOT_STATUS_LABELS[status] || status
+  const actions = availableQuotationActions(q, profile)
   const code = q.code
-  const viewPath = `/service-receipts/${code.replace('SQ-', 'Q-')}`
+  const viewPath = `/service-receipts/${code}`
+
+  // Split: inline one-tap vs. text-required (punt to detail view).
+  const inlineActions = actions.filter((a) => !a.requiresText)
+  const textActions   = actions.filter((a) =>  a.requiresText)
+
+  // Highlight card when the CURRENT user has an action to take.
+  const highlight = actions.length > 0
+
   return (
-    <div className={`bg-white rounded-2xl border overflow-hidden ${isOpen && canApprove ? 'border-amber-200' : ''}`}>
+    <div className={`bg-white rounded-2xl border overflow-hidden ${highlight ? 'border-amber-300 ring-1 ring-amber-200' : ''}`}>
       <Link to={viewPath} className="block p-4 hover:bg-gray-50">
         <div className="flex items-start justify-between gap-2 mb-1">
           <div className="font-mono font-black text-brand text-sm">{code}</div>
-          <StatusPill status={q.status} size="sm" />
+          <StatusPill status={statusLabel} size="sm" />
         </div>
         <div className="flex items-baseline justify-between gap-2">
           <div className="font-black text-gray-900 tracking-wide">{q.plateNo}</div>
@@ -230,26 +310,49 @@ function QuotationCard({ q, canApprove, busy, onApprove, onReject }) {
         <div className="text-xs text-gray-500 uppercase mt-0.5 truncate">{q.customer}</div>
         <div className="text-[11px] text-gray-400 mt-1">{formatDate(q.dateCreated)}</div>
       </Link>
-      {showActions && (
-        <div className="grid grid-cols-2 gap-2 p-3 border-t bg-amber-50/50">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onReject}
-            className="text-sm font-bold bg-white border-2 border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-40 px-3 py-3 rounded-xl active:scale-95 transition-transform"
-          >
-            ✕ Reject
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onApprove}
-            className="text-sm font-bold bg-green-600 hover:bg-green-700 text-white disabled:opacity-40 px-3 py-3 rounded-xl active:scale-95 transition-transform shadow"
-          >
-            ✓ Approve
-          </button>
+
+      {actions.length > 0 && (
+        <div className={`p-3 border-t ${highlight ? 'bg-amber-50/60' : 'bg-gray-50'}`}>
+          {inlineActions.length > 0 && (
+            <div className={`grid ${inlineActions.length === 1 ? 'grid-cols-1' : 'grid-cols-2'} gap-2`}>
+              {inlineActions.map((action) => (
+                <button
+                  key={action.key}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onAction(action)}
+                  className={`text-sm font-bold px-3 py-3 rounded-xl active:scale-95 transition-transform disabled:opacity-40 ${toneClasses(action.tone)}`}
+                >
+                  {toneLabel(action)}
+                </button>
+              ))}
+            </div>
+          )}
+          {textActions.length > 0 && (
+            <Link
+              to={viewPath}
+              className="mt-2 flex items-center justify-center gap-1 text-xs font-bold text-gray-600 hover:text-brand"
+            >
+              Open to {textActions.map((a) => a.label.toLowerCase()).join(' / ')} →
+            </Link>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function toneClasses(tone) {
+  switch (tone) {
+    case 'danger': return 'bg-white border-2 border-red-300 text-red-600 hover:bg-red-50'
+    case 'ghost':  return 'bg-white border-2 border-gray-300 text-gray-700 hover:bg-gray-50'
+    case 'primary':
+    default:       return 'bg-green-600 hover:bg-green-700 text-white shadow'
+  }
+}
+
+function toneLabel(action) {
+  if (action.key === QUOT_ACTION.CLIENT_APPROVE) return `✓ ${action.label}`
+  if (action.key === QUOT_ACTION.CLIENT_REJECT)  return `✕ ${action.label}`
+  return action.label
 }
