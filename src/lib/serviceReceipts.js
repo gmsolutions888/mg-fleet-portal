@@ -70,10 +70,18 @@ export const QUOT_STATUS_LABELS = Object.freeze({
 
 // Allowed next-statuses from each state. Used both by transition validation
 // and by the UI to know which buttons to show.
+//
+// Clarification requests skip the CLIENT_CLARIFICATION holding status and
+// route straight back to DRAFT so the branch admin supervisor owns the
+// response and can edit the line items directly. The client's note is
+// preserved in the audit trail + comment thread so the supervisor has the
+// full "why we're back at Draft" context.
+// CLIENT_CLARIFICATION remains in the state machine only to handle any
+// pre-existing docs stuck there from the initial Round 10 deploy.
 const ALLOWED_NEXT = Object.freeze({
   [QUOT_STATUS.DRAFT]:                [QUOT_STATUS.FOR_MG_FLEET_REVIEW],
   [QUOT_STATUS.FOR_MG_FLEET_REVIEW]:  [QUOT_STATUS.FOR_CLIENT_REVIEW, QUOT_STATUS.DRAFT],
-  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.CLIENT_CLARIFICATION],
+  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.DRAFT],
   [QUOT_STATUS.CLIENT_CLARIFICATION]: [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.CLIENT_REJECTED]:      [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.APPROVED_FINAL]:       [],
@@ -130,9 +138,12 @@ export function availableQuotationActions(quot, profile) {
     if (isAdminEscape || actor === 'fleet_client') {
       push(QUOT_ACTION.CLIENT_APPROVE, 'Approve', QUOT_STATUS.APPROVED_FINAL, 'primary')
       push(QUOT_ACTION.CLIENT_REJECT, 'Reject', QUOT_STATUS.CLIENT_REJECTED, 'danger', true)
-      push(QUOT_ACTION.CLIENT_CLARIFY, 'Request clarification', QUOT_STATUS.CLIENT_CLARIFICATION, 'ghost', true)
+      // Clarification bounces straight to DRAFT — supervisor owns the edit.
+      push(QUOT_ACTION.CLIENT_CLARIFY, 'Request clarification', QUOT_STATUS.DRAFT, 'ghost', true)
     }
   } else if (status === QUOT_STATUS.CLIENT_CLARIFICATION) {
+    // Legacy holding status — any pre-existing doc stuck here can be
+    // re-opened so the supervisor can address the comment and resubmit.
     if (isAdminEscape || actor === 'admin_supervisor' || actor === 'mg_fleet_manager') {
       push(QUOT_ACTION.REOPEN_TO_DRAFT, 'Re-open as draft to address', QUOT_STATUS.DRAFT)
     }
@@ -292,6 +303,76 @@ export async function transitionQuotation(id, { action, nextStatus, text, byProf
   }
 
   return { id, from: currentStatus, to: nextStatus, at: nowIso }
+}
+
+// Can this profile edit the line items on this quotation right now? Only at
+// DRAFT status and only for the supervisor/admin who owns the draft — fleet
+// clients never edit; MG Fleet manager forwards without editing (the intent
+// of bouncing back is to let the supervisor revise).
+export function canEditQuotation(quot, profile) {
+  if (!quot || !profile) return false
+  if (effectiveQuotationStatus(quot) !== QUOT_STATUS.DRAFT) return false
+  if (profile.is_admin) return true
+  const actor = actorRoleFor(profile)
+  return actor === 'admin_supervisor'
+}
+
+// Update the line items (and notes) on a DRAFT quotation. Recomputes labor +
+// materials totals so downstream callers don't have to. Appends an audit
+// entry so the revision shows up in the approval trail.
+export async function updateQuotationItems(id, { items, notes, byProfile }) {
+  if (!db) throw new Error('Firestore not configured.')
+  if (!id) throw new Error('Missing quotation id.')
+
+  const snap = await getDoc(doc(db, COLLECTION, id))
+  if (!snap.exists()) throw new Error('Quotation not found.')
+  const quot = { id: snap.id, ...snap.data() }
+  if (quot.kind !== 'quotation') throw new Error('Only quotations can be edited via this helper.')
+  if (!canEditQuotation(quot, byProfile)) {
+    throw new Error('Quotation is not editable in its current state.')
+  }
+
+  const cleaned = (items || []).map((i) => ({
+    type: i.type || 'Parts/Materials',
+    qty: Number(i.qty) || 1,
+    description: String(i.description || '').toUpperCase(),
+    unitCost: Number(i.unitCost) || 0,
+    subTotal: (Number(i.qty) || 1) * (Number(i.unitCost) || 0),
+  }))
+  const laborTotal = cleaned.filter((i) => i.type === 'Labor').reduce((s, i) => s + i.subTotal, 0)
+  const materialsTotal = cleaned.filter((i) => i.type !== 'Labor').reduce((s, i) => s + i.subTotal, 0)
+
+  const uid = auth?.currentUser?.uid || null
+  const nowIso = new Date().toISOString()
+  const byName = profileDisplayName(byProfile)
+  const byRole = actorRoleFor(byProfile)
+
+  await updateDoc(doc(db, COLLECTION, id), {
+    items: cleaned,
+    laborTotal,
+    materialsTotal,
+    estimatedTotal: laborTotal + materialsTotal,
+    notes: notes ?? quot.notes ?? '',
+    audit: arrayUnion({
+      action: 'edit_items',
+      from: QUOT_STATUS.DRAFT,
+      to: QUOT_STATUS.DRAFT,
+      by: uid,
+      byName,
+      byRole,
+      at: nowIso,
+      note: `Revised to ${cleaned.length} item${cleaned.length === 1 ? '' : 's'} (${formatCurrencyShort(laborTotal + materialsTotal)})`,
+    }),
+    updatedAt: serverTimestamp(),
+    updatedBy: uid,
+  })
+
+  return { id, itemCount: cleaned.length, estimatedTotal: laborTotal + materialsTotal }
+}
+
+function formatCurrencyShort(n) {
+  if (!Number.isFinite(n)) return ''
+  return `₱${Math.round(n).toLocaleString('en-PH')}`
 }
 
 // Free-text comment, posted without changing status. Any party in the chain

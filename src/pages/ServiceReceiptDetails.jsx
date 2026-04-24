@@ -11,9 +11,9 @@ import { useAuth } from '../context/AuthContext'
 import { formatMoney } from '../lib/dummyData'
 import {
   QUOT_STATUS, QUOT_STATUS_LABELS, QUOT_ACTION,
-  availableQuotationActions, effectiveQuotationStatus,
-  transitionQuotation, addQuotationComment, setReceiptStatus,
-  watchReceiptByCode,
+  availableQuotationActions, canEditQuotation, effectiveQuotationStatus,
+  transitionQuotation, updateQuotationItems, addQuotationComment,
+  setReceiptStatus, watchReceiptByCode,
 } from '../lib/serviceReceipts'
 import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
@@ -54,9 +54,11 @@ function QuotationDetail({ quot, profile }) {
   const status = effectiveQuotationStatus(quot)
   const statusLabel = QUOT_STATUS_LABELS[status] || status
   const actions = availableQuotationActions(quot, profile)
+  const editable = canEditQuotation(quot, profile)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [modalAction, setModalAction] = useState(null)
+  const [editMode, setEditMode] = useState(false)
 
   const onAction = async (action) => {
     if (action.requiresText) { setModalAction(action); return }
@@ -109,8 +111,37 @@ function QuotationDetail({ quot, profile }) {
         )}
 
         <CustomerCard receipt={quot} />
-        <LineItemsCard receipt={quot} />
-        <TotalsCard receipt={quot} />
+
+        {editable && !editMode && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center gap-3">
+            <div className="text-2xl leading-none">✏️</div>
+            <div className="flex-1 text-xs text-amber-800">
+              <div className="font-bold">This draft is editable.</div>
+              <div>Revise line items before forwarding — especially after a clarification request.</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setEditMode(true)}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-full shadow"
+            >
+              Edit items
+            </button>
+          </div>
+        )}
+
+        {editMode ? (
+          <EditableItems
+            quot={quot}
+            profile={profile}
+            onCancel={() => setEditMode(false)}
+            onSaved={() => setEditMode(false)}
+          />
+        ) : (
+          <>
+            <LineItemsCard receipt={quot} />
+            <TotalsCard receipt={quot} />
+          </>
+        )}
 
         <CommentThread quot={quot} profile={profile} />
       </div>
@@ -145,6 +176,192 @@ function QuotationDetail({ quot, profile }) {
           onSubmit={(text) => runTransition(modalAction, text)}
         />
       )}
+    </div>
+  )
+}
+
+// ── Editable line items (DRAFT only, supervisor/admin) ──────────────────
+
+function EditableItems({ quot, profile, onCancel, onSaved }) {
+  const [items, setItems] = useState(() =>
+    (quot.items || []).map((i) => ({
+      type: i.type || 'Parts/Materials',
+      qty: Number(i.qty) || 1,
+      description: i.description || '',
+      unitCost: Number(i.unitCost) || 0,
+    })),
+  )
+  const [notes, setNotes] = useState(quot.notes || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const laborTotal = items.filter((i) => i.type === 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
+  const matTotal   = items.filter((i) => i.type !== 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
+  const grand = laborTotal + matTotal
+
+  const updateRow = (idx, patch) => setItems(items.map((r, i) => i === idx ? { ...r, ...patch } : r))
+  const removeRow = (idx) => setItems(items.filter((_, i) => i !== idx))
+  const addRow = () => setItems([...items, { type: 'Parts/Materials', qty: 1, description: '', unitCost: 0 }])
+
+  const save = async () => {
+    if (saving) return
+    setSaving(true); setError(null)
+    try {
+      await updateQuotationItems(quot.id, { items, notes, byProfile: profile })
+      onSaved?.()
+    } catch (err) {
+      console.error('[quotation] edit save failed:', err)
+      setError(err.message || String(err))
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="bg-white rounded-2xl border overflow-hidden">
+      <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between">
+        <div className="text-[11px] uppercase tracking-widest font-bold text-amber-800">Editing line items</div>
+        <span className="text-[10px] text-amber-700">{items.length} item{items.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {items.map((row, i) => (
+          <EditRow key={i} row={row} index={i}
+            onChange={(patch) => updateRow(i, patch)}
+            onRemove={() => removeRow(i)}
+            canRemove={items.length > 1}
+          />
+        ))}
+        <button
+          type="button"
+          onClick={addRow}
+          className="w-full bg-white border-2 border-dashed border-gray-300 text-gray-600 hover:border-brand hover:text-brand rounded-2xl py-3 font-bold text-sm flex items-center justify-center gap-1.5"
+        >
+          <Icon name="plus" className="w-4 h-4" />
+          Add item
+        </button>
+
+        <div>
+          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">Notes</div>
+          <textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="input text-sm"
+            placeholder="Any notes for the MG Fleet manager or client…"
+          />
+        </div>
+
+        <div className="bg-gray-50 rounded-xl px-4 py-3 flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">New Estimated Total</span>
+          <span className="text-xl font-black text-green-700">{formatMoney(grand)}</span>
+        </div>
+
+        {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">Save failed: {error}</div>}
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={saving}
+            className="bg-white border-2 border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 font-bold text-sm px-4 py-3 rounded-xl active:scale-95 transition-transform"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving}
+            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-40 text-white font-bold text-sm px-4 py-3 rounded-xl shadow active:scale-95 transition-transform"
+          >
+            {saving ? 'Saving…' : 'Save revisions'}
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function EditRow({ row, index, onChange, onRemove, canRemove }) {
+  const isLabor = row.type === 'Labor'
+  const subTotal = row.qty * row.unitCost
+  return (
+    <div className={`bg-white rounded-2xl border overflow-hidden ${isLabor ? 'border-sky-200' : 'border-gray-200'}`}>
+      <div className={`px-3 py-2 border-b flex items-center justify-between ${isLabor ? 'bg-sky-50' : 'bg-gray-50'}`}>
+        <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${isLabor ? 'bg-sky-600 text-white' : 'bg-gray-700 text-white'}`}>
+          #{index + 1} · {isLabor ? 'Labor' : 'Parts'}
+        </span>
+        {canRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="text-xs text-red-600 hover:text-red-700 font-bold"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      <div className="p-3 space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          {['Labor', 'Parts/Materials'].map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onChange({ type: t })}
+              className={`text-xs font-bold py-2 rounded-lg border-2 transition-colors ${
+                row.type === t
+                  ? (t === 'Labor' ? 'bg-sky-600 border-sky-600 text-white' : 'bg-gray-800 border-gray-800 text-white')
+                  : 'bg-white border-gray-200 text-gray-600'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <input
+          className="input text-sm"
+          value={row.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          placeholder="Description (e.g. REPLACE BRAKE PADS FRONT)"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">Qty</div>
+            <div className="flex items-center bg-gray-50 border rounded-xl overflow-hidden">
+              <button
+                type="button"
+                onClick={() => onChange({ qty: Math.max(1, (row.qty || 1) - 1) })}
+                className="w-9 h-10 text-lg font-black text-gray-600 hover:bg-gray-100"
+              >−</button>
+              <input
+                type="number"
+                min="1"
+                value={row.qty}
+                onChange={(e) => onChange({ qty: Math.max(1, Number(e.target.value) || 1) })}
+                className="flex-1 bg-transparent text-center font-bold text-sm focus:outline-none min-w-0"
+              />
+              <button
+                type="button"
+                onClick={() => onChange({ qty: (row.qty || 1) + 1 })}
+                className="w-9 h-10 text-lg font-black text-gray-600 hover:bg-gray-100"
+              >+</button>
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1">Unit Cost</div>
+            <input
+              type="number"
+              min="0"
+              value={row.unitCost}
+              onChange={(e) => onChange({ unitCost: Number(e.target.value) || 0 })}
+              className="input text-right font-mono text-sm"
+            />
+          </div>
+        </div>
+        <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Sub Total</span>
+          <span className="text-sm font-black text-gray-900">{formatMoney(subTotal)}</span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -367,8 +584,9 @@ function auditVerb(action, to) {
     case QUOT_ACTION.BOUNCE_TO_SUPERVISOR:  return 'bounced back to supervisor'
     case QUOT_ACTION.CLIENT_APPROVE:        return 'APPROVED the quotation'
     case QUOT_ACTION.CLIENT_REJECT:         return 'REJECTED the quotation'
-    case QUOT_ACTION.CLIENT_CLARIFY:        return 'requested clarification'
+    case QUOT_ACTION.CLIENT_CLARIFY:        return 'requested clarification — bounced to draft'
     case QUOT_ACTION.REOPEN_TO_DRAFT:       return 're-opened as draft'
+    case 'edit_items':                      return 'revised the line items'
     case 'create':                          return 'created the quotation'
     default:                                return `changed status to ${to || '—'}`
   }
@@ -381,6 +599,7 @@ function auditIconGlyph(action) {
     case QUOT_ACTION.CLIENT_CLARIFY:       return '?'
     case QUOT_ACTION.BOUNCE_TO_SUPERVISOR: return '↩'
     case QUOT_ACTION.REOPEN_TO_DRAFT:      return '↻'
+    case 'edit_items':                     return '✏'
     default:                               return '→'
   }
 }
@@ -391,6 +610,7 @@ function auditIconTone(action) {
     case QUOT_ACTION.CLIENT_REJECT:        return 'bg-red-600 text-white'
     case QUOT_ACTION.CLIENT_CLARIFY:       return 'bg-amber-500 text-white'
     case QUOT_ACTION.BOUNCE_TO_SUPERVISOR: return 'bg-amber-500 text-white'
+    case 'edit_items':                     return 'bg-amber-600 text-white'
     default:                               return 'bg-brand text-white'
   }
 }
