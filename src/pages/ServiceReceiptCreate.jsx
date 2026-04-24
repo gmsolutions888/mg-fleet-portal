@@ -24,11 +24,15 @@ const PARTS_CATALOG = [
   { code: 'L002', name: 'REPLACE ENGINE SUPPORT',         compat: '', supplier: '', unitCost: 800,  srp: 800,  stock: null, reserved: null },
 ]
 
-export default function ServiceReceiptCreate() {
+// `kind` is "receipt" (default) or "quotation" — chosen by the route the user
+// arrived from. A quotation enters the Round 10 approval chain at DRAFT; a
+// receipt goes straight into the OPEN → PAID/CANCELLED flow.
+export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   const [search] = useSearchParams()
   const navigate = useNavigate()
   const { profile } = useAuth()
   const initialPlate = (search.get('plate') || '').toUpperCase()
+  const isQuotation = kind === 'quotation'
 
   const [vehicles, setVehicles] = useState([])
   useEffect(() => {
@@ -74,7 +78,7 @@ export default function ServiceReceiptCreate() {
     e.preventDefault()
     setSubmitting(true); setError(null)
     try {
-      const { code } = await createReceipt('receipt', {
+      const { code } = await createReceipt(kind, {
         plateNo: plate,
         brandModel: vehicle.brandModel || '',
         latestOdo: odo,
@@ -87,6 +91,7 @@ export default function ServiceReceiptCreate() {
         scheduleType: 'SCHEDULED',
         items,
         notes,
+        byProfile: profile,
       })
       navigate(`/service-receipts/${code}`)
     } catch (err) {
@@ -100,8 +105,8 @@ export default function ServiceReceiptCreate() {
   return (
     <form onSubmit={submit} className="pb-32">
       <PageHero
-        eyebrow="NEW RECEIPT"
-        title="Create Service Receipt"
+        eyebrow={isQuotation ? 'NEW QUOTATION' : 'NEW RECEIPT'}
+        title={isQuotation ? 'Create Service Quotation' : 'Create Service Receipt'}
         subtitle={plate ? `${plate}${vehicle.brandModel ? ` · ${vehicle.brandModel}` : ''}` : 'Enter customer + vehicle details below'}
         right={<GrandTotalChip value={grandTotal} />}
       />
@@ -227,7 +232,7 @@ export default function ServiceReceiptCreate() {
             disabled={submitting}
             className="bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-bold text-sm px-6 py-3 rounded-xl shadow active:scale-95 transition-transform shrink-0"
           >
-            {submitting ? 'Submitting…' : 'Submit'}
+            {submitting ? 'Saving…' : (isQuotation ? 'Save as Draft' : 'Submit Receipt')}
           </button>
         </div>
       </div>

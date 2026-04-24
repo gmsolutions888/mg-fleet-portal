@@ -73,7 +73,7 @@ export default function App() {
           {/* Quotations */}
           <Route path="/quotations"            element={<ProtectedRoute allowedCategories={INTERNAL}><Quotations /></ProtectedRoute>} />
           <Route path="/quotations/unbilled"   element={<ProtectedRoute allowedCategories={INTERNAL}><Quotations unbilledOnly /></ProtectedRoute>} />
-          <Route path="/quotations/create"     element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceiptCreate /></ProtectedRoute>} />
+          <Route path="/quotations/create"     element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceiptCreate kind="quotation" /></ProtectedRoute>} />
 
           {/* Service Receipts */}
           <Route path="/service-receipts"        element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceipts /></ProtectedRoute>} />
