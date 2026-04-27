@@ -11,8 +11,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ALL_ITEMS, DEFECT_CODES, LABOR_TYPES,
+  ALL_ITEMS, DEFECT_CODES, INSP_TO_PMS, LABOR_TYPES, PMS_MAP,
 } from '../lib/mgfms-catalog'
+import { getApprovedQuotationForPlate } from '../lib/serviceReceipts'
 import PhotoCapture from '../components/PhotoCapture'
 
 const DRAFT_VERSION = 1
@@ -60,6 +61,77 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
   const [otherLabor, setOtherLabor] = useState(draft?.otherLabor || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+
+  // Round 38 — prefill partReplaced + qty from the approved quote
+  // for this plate. Matches each flagged item to a quote line via
+  // its PMS-link label first, then falls back to the inspection
+  // item's own label. Skips items the user has already started
+  // filling in. Runs once per mount.
+  const [quoteCode, setQuoteCode] = useState(null)
+  useEffect(() => {
+    if (!header?.plate) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const quot = await getApprovedQuotationForPlate(header.plate)
+        if (cancelled || !quot || !Array.isArray(quot.items)) return
+        setQuoteCode(quot.code || null)
+
+        // Build a list of non-Labor quote lines with cleaned descriptions
+        // (strip "(Monitor) " / "Replace " / defect-suffix) so substring
+        // match against inspection-item labels is reliable.
+        const partsLines = quot.items
+          .filter((qi) => qi.type !== 'Labor')
+          .map((qi) => {
+            let clean = String(qi.description || '').trim()
+            clean = clean.replace(/^\([^)]*\)\s+/, '')        // (Monitor)
+            clean = clean.replace(/^Replace\s+/i, '')           // verb
+            clean = clean.replace(/\s+—\s+.*$/, '')             // — defect
+            return { ...qi, _clean: clean.toUpperCase() }
+          })
+
+        if (partsLines.length === 0) return
+
+        setRepairs((prev) => {
+          const next = { ...prev }
+          for (const item of flagged) {
+            const cur = prev[item.code]
+            // Don't overwrite anything the assessor already touched.
+            if (cur?.partReplaced || cur?.skip) continue
+
+            // Try the PMS-linked label first ("Engine Oil"), then the
+            // inspection item's own label ("Engine oil — condition & level").
+            const pmsCode = INSP_TO_PMS[item.code]
+            const candidates = [
+              pmsCode && PMS_MAP[pmsCode]?.label,
+              item.label,
+            ].filter(Boolean).map((s) => String(s).toUpperCase())
+
+            let match = null
+            for (const candidate of candidates) {
+              match = partsLines.find((line) =>
+                line._clean.includes(candidate) || candidate.includes(line._clean),
+              )
+              if (match) break
+            }
+            if (match) {
+              next[item.code] = {
+                ...cur,
+                partReplaced: match._clean,           // cleaned name, no verb
+                qty: Number(match.qty) || cur?.qty || 1,
+                _fromQuote: quot.code || true,         // surfaced as a small badge
+              }
+            }
+          }
+          return next
+        })
+      } catch (err) {
+        console.warn('[QuickFix] quote prefill failed:', err)
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [header?.plate])
 
   // Persist draft on change.
   const saveTimerRef = useRef(null)
@@ -257,9 +329,16 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
               ) : (
                 <div className="p-4 space-y-3">
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-                      Part Replaced *
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                        Part Replaced *
+                      </label>
+                      {r._fromQuote && (
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                          From quote {typeof r._fromQuote === 'string' ? r._fromQuote : ''}
+                        </span>
+                      )}
+                    </div>
                     <input
                       id={`fix-${item.code}-part`}
                       value={r.partReplaced || ''}
