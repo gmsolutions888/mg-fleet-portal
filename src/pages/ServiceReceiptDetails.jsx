@@ -816,6 +816,76 @@ function EditableItems({ quot, profile, onCancel, onSaved }) {
 }
 
 
+// ── Chain stepper ────────────────────────────────────────────────────────
+
+const STEPS = [
+  { code: QUOT_STATUS.DRAFT,                label: 'Draft',        icon: '📝' },
+  { code: QUOT_STATUS.FOR_MG_FLEET_REVIEW,  label: 'MG Fleet',     icon: '🏢' },
+  { code: QUOT_STATUS.FOR_CLIENT_REVIEW,    label: 'Client',       icon: '👤' },
+  { code: QUOT_STATUS.APPROVED_FINAL,       label: 'Approved',     icon: '✓'  },
+]
+
+function ChainStepper({ status }) {
+  // Where are we on the happy path?
+  const idx = (() => {
+    if (status === QUOT_STATUS.DRAFT) return 0
+    if (status === QUOT_STATUS.FOR_MG_FLEET_REVIEW) return 1
+    if (status === QUOT_STATUS.FOR_CLIENT_REVIEW) return 2
+    if (status === QUOT_STATUS.CLIENT_CLARIFICATION) return 2
+    if (status === QUOT_STATUS.APPROVED_FINAL) return 3
+    if (status === QUOT_STATUS.CLIENT_REJECTED) return 2
+    return 0
+  })()
+
+  const rejected = status === QUOT_STATUS.CLIENT_REJECTED
+  const clarify  = status === QUOT_STATUS.CLIENT_CLARIFICATION
+
+  return (
+    <div className="bg-white rounded-2xl border p-4">
+      <div className="text-[10px] font-bold tracking-widest text-gray-500 mb-3">APPROVAL CHAIN</div>
+      <div className="flex items-center">
+        {STEPS.map((step, i) => {
+          const done = i < idx || (i === idx && status === QUOT_STATUS.APPROVED_FINAL)
+          const here = i === idx && !done
+          return (
+            <div key={step.code} className="flex-1 flex items-center">
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-black shrink-0 ${
+                  done   ? 'bg-green-600 text-white'
+                  : here  ? (rejected ? 'bg-red-600 text-white' : clarify ? 'bg-amber-500 text-white' : 'bg-brand text-white ring-4 ring-brand/20')
+                  :         'bg-gray-100 text-gray-400'
+                }`}>
+                  {done ? '✓' : step.icon}
+                </div>
+                <div className={`text-[10px] font-bold uppercase tracking-wider mt-1.5 text-center truncate max-w-full ${
+                  done ? 'text-green-700' : here ? (rejected ? 'text-red-700' : clarify ? 'text-amber-700' : 'text-brand') : 'text-gray-400'
+                }`}>
+                  {step.label}
+                </div>
+              </div>
+              {i < STEPS.length - 1 && (
+                <div className={`h-0.5 flex-shrink-0 w-4 sm:w-6 -mt-6 ${done ? 'bg-green-600' : 'bg-gray-200'}`} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {(clarify || rejected) && (
+        <div className={`mt-3 text-[11px] rounded px-3 py-2 ${
+          rejected ? 'bg-red-50 border border-red-200 text-red-800'
+                   : 'bg-amber-50 border border-amber-200 text-amber-800'
+        }`}>
+          {rejected
+            ? 'Client rejected this quotation. Supervisor can re-open as draft to revise and resubmit.'
+            : 'Client is asking for clarification. See the comment thread, then supervisor re-opens as draft to address.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Comment thread + audit ───────────────────────────────────────────────
+
 function CommentThread({ quot, profile }) {
   const [text, setText] = useState('')
   const [posting, setPosting] = useState(false)
