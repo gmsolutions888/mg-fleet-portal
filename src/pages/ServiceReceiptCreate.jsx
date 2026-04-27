@@ -13,6 +13,7 @@ import { MECHANICS, formatMoney } from '../lib/dummyData'
 import { watchVehicles } from '../lib/vehicles'
 import { createReceipt } from '../lib/serviceReceipts'
 import {
+  enrichItemsWithCatalogPrices,
   extractAssessmentNotes, extractHeaderPrefill,
   suggestQuoteItemsFromAssessment, summarizeAssessmentForQuote,
 } from '../lib/assessmentToQuote'
@@ -147,7 +148,18 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
           setPrefillBanner({ tone: 'info', text: `Assessment ${summary.rwa || fromAssessment} had no critical or monitor findings — nothing to prefill on line items. Header fields and notes were carried over.` })
           return
         }
-        setItems(suggestions)
+        // Round 37 — auto-price the suggestions against the live Cavite
+        // catalog. Uses the assessment header's caviteIds (Round 36)
+        // so the price lookup is exact-FK, not name-resolved.
+        const headerMakeId = Number(a?.header?.makeId)
+        const headerModelId = Number(a?.header?.modelId)
+        const priced = await enrichItemsWithCatalogPrices(suggestions, {
+          makeId: Number.isFinite(headerMakeId) ? headerMakeId : null,
+          modelId: Number.isFinite(headerModelId) ? headerModelId : null,
+        })
+        if (cancelled) return
+        const pricedCount = priced.filter((i) => Number(i.unitCost) > 0).length
+        setItems(priced)
         const parts = []
         if (summary.laborCount > 0) {
           parts.push(`${summary.laborCount} labor type${summary.laborCount === 1 ? '' : 's'} declared`)
@@ -158,9 +170,12 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
         const sourceNote = summary.laborSource === 'derived'
           ? ' Labor lines were derived per item (no labors declared on this assessment).'
           : ''
+        const priceNote = pricedCount > 0
+          ? ` ${pricedCount} of ${priced.length} priced from the Cavite catalog — review the rest.`
+          : ' No catalog price matches — fill unit costs manually.'
         setPrefillBanner({
           tone: 'success',
-          text: `Prefilled ${suggestions.length} line${suggestions.length === 1 ? '' : 's'} from ${summary.rwa || fromAssessment} (${parts.join(', ')}).${sourceNote} Review and set unit costs before submitting.`,
+          text: `Prefilled ${suggestions.length} line${suggestions.length === 1 ? '' : 's'} from ${summary.rwa || fromAssessment} (${parts.join(', ')}).${sourceNote}${priceNote}`,
         })
       } catch (err) {
         console.error('[quote prefill] failed:', err)

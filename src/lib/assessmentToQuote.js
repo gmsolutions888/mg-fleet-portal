@@ -26,6 +26,7 @@ import {
   ALL_ITEMS, CATEGORIES, DEFECT_CODES, ITEM_MAP, INSP_TO_PMS,
   LABOR_TYPE_MAP, PMS_MAP, getAction,
 } from './mgfms-catalog'
+import { searchLabor, searchPartsAndConsumables } from './caviteCatalogSearch'
 
 // Stable category order so the generated quote reads like a service order
 // (Engine → Brakes → Suspension → Electrical → Tires → Body → ...).
@@ -268,4 +269,86 @@ export function summarizeAssessmentForQuote(assessment) {
     laborSource,
     rwa: assessment?.rwaNumber || null,
   }
+}
+
+// Round 37 — auto-price prefill rows against the live Cavite catalog.
+// Given the suggestion items + the vehicle's cavite IDs, fuzzy-match
+// each row's description against caviteServices (Labor) or
+// caviteParts + caviteConsumables (Parts/Materials) and stamp the
+// SRP onto unitCost. Rows with no catalog match keep unitCost at 0
+// for the user to fill manually.
+//
+// Returns the items array with prices populated. Async because the
+// catalog search reads from Firestore.
+export async function enrichItemsWithCatalogPrices(items, { makeId, modelId } = {}) {
+  if (!Array.isArray(items) || items.length === 0) return items
+  // No vehicle IDs → nothing to filter against. Skip.
+  if (!Number.isFinite(makeId) || !Number.isFinite(modelId)) return items
+
+  // Strip the prefill prefixes so the catalog lookup matches against
+  // the actual subject. "Replace Air Filter" → "Air Filter",
+  // "(Monitor) Replace Brake Pads Front" → "Brake Pads Front",
+  // "Service: Brake pad thickness — front" → "Brake pad thickness".
+  const stripDescriptionPrefix = (desc) => {
+    let s = String(desc || '').trim()
+    // Drop tags like "(Monitor) " / "(Watch) ".
+    s = s.replace(/^\([^)]*\)\s+/, '')
+    // Drop labor severity prefixes from Round 17 legacy fallback.
+    s = s.replace(/^(URGENT —|Critical:|Service:|Watch:)\s*/i, '')
+    // Drop the "Replace " verb.
+    s = s.replace(/^Replace\s+/i, '')
+    // Drop trailing defect-code suffix " — Low thickness".
+    s = s.replace(/\s+—\s+.*$/, '')
+    return s.trim()
+  }
+
+  // Score how well a catalog row matches the prefill subject. Cheap
+  // tokenized overlap — each word in `term` that also appears in
+  // `candidate` adds to the score, longer term wins on ties.
+  const scoreMatch = (term, candidate) => {
+    const t = String(term || '').toUpperCase()
+    const c = String(candidate || '').toUpperCase()
+    if (!t || !c) return 0
+    if (c === t) return 1000
+    if (c.includes(t)) return 500 + t.length
+    if (t.includes(c)) return 400 + c.length
+    // Token overlap.
+    const tTokens = new Set(t.split(/\s+/).filter((w) => w.length >= 3))
+    const cTokens = new Set(c.split(/\s+/).filter((w) => w.length >= 3))
+    let hits = 0
+    for (const tok of tTokens) if (cTokens.has(tok)) hits++
+    return hits * 50
+  }
+
+  const enriched = []
+  for (const item of items) {
+    // If the line was already priced by some other path, keep it.
+    if (Number(item.unitCost) > 0) {
+      enriched.push(item); continue
+    }
+    const subject = stripDescriptionPrefix(item.description)
+    if (!subject) { enriched.push(item); continue }
+    try {
+      const pool = item.type === 'Labor'
+        ? await searchLabor({ makeId, modelId, term: subject })
+        : await searchPartsAndConsumables({ makeId, modelId, term: subject })
+      // Pick the highest-scoring candidate; require at least 100 to
+      // avoid stamping a price from a marginal token-overlap match.
+      let best = null
+      let bestScore = 99
+      for (const cand of pool) {
+        const score = scoreMatch(subject, cand.name)
+        if (score > bestScore) { best = cand; bestScore = score }
+      }
+      if (best) {
+        enriched.push({ ...item, unitCost: Number(best.unitCost) || Number(best.srp) || 0 })
+      } else {
+        enriched.push(item)
+      }
+    } catch (err) {
+      console.warn('[enrichItemsWithCatalogPrices] match failed for', item.description, err)
+      enriched.push(item)
+    }
+  }
+  return enriched
 }
