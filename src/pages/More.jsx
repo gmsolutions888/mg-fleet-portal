@@ -104,6 +104,8 @@ function CustomerMenu({ profile }) {
       <SectionHeader>Fleet</SectionHeader>
       <div className="bg-white divide-y">
         <Row to="/portal/service-log" icon="doc" label="Service Log" />
+        <Row to="/portal/quotations" icon="doc" label="Service Quotations" />
+        <Row to="/portal/invoices" icon="doc" label="My Invoices" />
         {canBookServices(profile?.role) && (
           <Row to="/appointments" icon="calendar" label="Book a Service" />
         )}

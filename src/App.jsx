@@ -109,6 +109,7 @@ export default function App() {
           <Route path="/portal/my-fleet"       element={<ProtectedRoute allowedCategories={CUSTOMER}><MyFleet /></ProtectedRoute>} />
           <Route path="/portal/service-log"    element={<ProtectedRoute allowedCategories={CUSTOMER}><ServiceLog /></ProtectedRoute>} />
           <Route path="/portal/quotations"     element={<ProtectedRoute allowedCategories={CUSTOMER}><Quotations customerView /></ProtectedRoute>} />
+          <Route path="/portal/invoices"       element={<ProtectedRoute allowedCategories={CUSTOMER}><ClientInvoices customerView /></ProtectedRoute>} />
 
           {/* Admin (gated by is_admin flag, not by role category) */}
           <Route path="/admin/fleet-companies" element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />

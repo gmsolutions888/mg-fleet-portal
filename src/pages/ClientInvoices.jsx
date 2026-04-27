@@ -1,6 +1,11 @@
-// Client Invoices — bills MG Fleet has raised against fleet clients. Staff
-// view; the client-facing version is /portal/invoices (Round 13c). Tabs
-// include OVERDUE as a virtual status (computed from dueAtIso vs now;
+// Client Invoices — bills MG Fleet has raised against fleet clients. Used in
+// two surfaces:
+//   - /client-invoices         (staff view, all clients)
+//   - /portal/invoices         (customer view, scoped to their company,
+//                               read-only, no branch column, friendlier copy)
+// Pass `customerView` to render the second mode.
+//
+// Tabs include OVERDUE as a virtual status (computed from dueAtIso vs now;
 // invoices in OVERDUE are still persisted as OPEN).
 
 import { useEffect, useMemo, useState } from 'react'
@@ -13,6 +18,7 @@ import {
   effectiveStatus,
   watchClientInvoices,
 } from '../lib/clientInvoices'
+import { profileCompany } from '../lib/vehicles'
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
@@ -33,8 +39,9 @@ const BUCKET_LABELS = {
   '90_PLUS': '90+',
 }
 
-export default function ClientInvoices() {
+export default function ClientInvoices({ customerView = false }) {
   const { profile } = useAuth()
+  const company = customerView ? (profileCompany(profile) || '').toString() : ''
   const [rows, setRows] = useState([])
   const [source, setSource] = useState('loading')
   const [search, setSearch] = useState('')
@@ -48,13 +55,28 @@ export default function ClientInvoices() {
   }, [])
 
   useEffect(() => {
-    // Internal staff see all clients' invoices; admin and finance behave the
-    // same here (no per-branch scoping — MG Fleet is the issuer, not branches).
-    const unsub = watchClientInvoices({}, ({ rows, source }) => {
+    // Customers: scope to their own company. Bail early if no company on
+    // profile (the user wasn't enrolled against a fleet company).
+    if (customerView && !company) {
+      setRows([]); setSource('no-company'); return () => {}
+    }
+    const opts = customerView ? { company } : {}
+    const unsub = watchClientInvoices(opts, ({ rows, source }) => {
       setRows(rows); setSource(source)
     })
     return unsub
-  }, [])
+  }, [customerView, company])
+
+  if (customerView && !company) {
+    return (
+      <div className="p-4 sm:p-6">
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
+          <div className="font-semibold mb-1">No fleet company set on your profile</div>
+          <div className="text-xs">Ask your account admin to link your account to your fleet company before invoices will appear here.</div>
+        </div>
+      </div>
+    )
+  }
 
   const decorated = useMemo(() => rows.map((r) => ({
     ...r,
@@ -108,9 +130,9 @@ export default function ClientInvoices() {
   return (
     <div className="pb-24">
       <PageHero
-        eyebrow="CLIENT INVOICES"
-        title="MG Fleet receivables"
-        subtitle={`${rows.length} total · ${formatMoney(openReceivable)} outstanding`}
+        eyebrow={customerView ? 'YOUR INVOICES' : 'CLIENT INVOICES'}
+        title={customerView ? (company || 'Fleet') : 'MG Fleet receivables'}
+        subtitle={`${rows.length} total · ${formatMoney(openReceivable)} ${customerView ? 'outstanding to MG Fleet' : 'outstanding'}`}
         right={<HeroStat value={counts.OVERDUE || 0} label="OVERDUE" tone="solid" />}
       />
 
@@ -167,7 +189,7 @@ export default function ClientInvoices() {
               No client invoices match.
             </div>
           )}
-          {filtered.map((r) => <InvoiceCard key={r.id || r.code} r={r} />)}
+          {filtered.map((r) => <InvoiceCard key={r.id || r.code} r={r} customerView={customerView} />)}
         </div>
 
         <div className="hidden lg:block bg-white rounded-2xl border overflow-hidden">
@@ -179,8 +201,8 @@ export default function ClientInvoices() {
                   <th className="px-4 py-3 text-left font-medium">Issued</th>
                   <th className="px-4 py-3 text-left font-medium">Due</th>
                   <th className="px-4 py-3 text-left font-medium">Plate</th>
-                  <th className="px-4 py-3 text-left font-medium">Company</th>
-                  <th className="px-4 py-3 text-left font-medium">Branch</th>
+                  {!customerView && <th className="px-4 py-3 text-left font-medium">Company</th>}
+                  {!customerView && <th className="px-4 py-3 text-left font-medium">Branch</th>}
                   <th className="px-4 py-3 text-right font-medium">Total</th>
                   <th className="px-4 py-3 text-right font-medium">Balance</th>
                   <th className="px-4 py-3 text-right font-medium">Status</th>
@@ -188,7 +210,7 @@ export default function ClientInvoices() {
               </thead>
               <tbody className="divide-y">
                 {filtered.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">No client invoices.</td></tr>
+                  <tr><td colSpan={customerView ? 7 : 9} className="px-4 py-8 text-center text-gray-400">No invoices yet.</td></tr>
                 )}
                 {filtered.map((r) => {
                   const balance = Number(r.balanceDue ?? r.total) || 0
@@ -206,8 +228,8 @@ export default function ClientInvoices() {
                       <td className="px-4 py-2">
                         <Link to={`/vehicles/${r.plateNo}`} className="font-semibold text-gray-800 hover:text-brand">{r.plateNo}</Link>
                       </td>
-                      <td className="px-4 py-2 text-xs font-mono text-gray-600 truncate max-w-[200px]">{r.company || '—'}</td>
-                      <td className="px-4 py-2 text-xs font-mono text-gray-600">{r.branch || '—'}</td>
+                      {!customerView && <td className="px-4 py-2 text-xs font-mono text-gray-600 truncate max-w-[200px]">{r.company || '—'}</td>}
+                      {!customerView && <td className="px-4 py-2 text-xs font-mono text-gray-600">{r.branch || '—'}</td>}
                       <td className="px-4 py-2 text-right font-bold">{formatMoney(r.total)}</td>
                       <td className="px-4 py-2 text-right">
                         {r.status === CLIENT_INVOICE_STATUS.PAID
@@ -263,7 +285,7 @@ function DueCell({ invoice }) {
   )
 }
 
-function InvoiceCard({ r }) {
+function InvoiceCard({ r, customerView }) {
   const balance = Number(r.balanceDue ?? r.total) || 0
   return (
     <Link
@@ -278,9 +300,11 @@ function InvoiceCard({ r }) {
         <div className="font-black text-gray-900 tracking-wide">{r.plateNo}</div>
         <div className="text-xl font-black text-gray-900">{formatMoney(r.total)}</div>
       </div>
-      <div className="text-xs text-gray-500 uppercase truncate mt-0.5">{r.company || '—'}</div>
+      <div className="text-xs text-gray-500 uppercase truncate mt-0.5">
+        {customerView ? (r.brandModel || r.customer || '—') : (r.company || '—')}
+      </div>
       <div className="flex items-center justify-between gap-2 mt-2 text-[11px] text-gray-400">
-        <span>Issued {formatDate(r.issuedAtIso)} · {r.branch || '—'}</span>
+        <span>Issued {formatDate(r.issuedAtIso)}{!customerView && ` · ${r.branch || '—'}`}</span>
         {r.status === CLIENT_INVOICE_STATUS.OPEN && (
           <span className={`font-bold ${(r._aging?.daysPastDue || 0) > 0 ? 'text-red-700' : 'text-gray-700'}`}>
             Bal {formatMoney(balance)}
