@@ -54,7 +54,16 @@ export default function VehicleCatalogIngest() {
     console.log('[ingest] parse started:', file.name, file.size, 'bytes')
     try {
       await yieldToUI()
-      const xlsx = await import('xlsx')
+      // Static literal import so Vite code-splits xlsx into its own chunk.
+      // Race it against a 30s timeout so a network stall surfaces as a
+      // visible error instead of an apparent page freeze.
+      const xlsx = await Promise.race([
+        import('xlsx'),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error('xlsx parser failed to load in 30s — check DevTools → Network for the xlsx-*.js asset, or use the CSV / JSON-paste fallback.')),
+          30000,
+        )),
+      ])
       console.log('[ingest] xlsx module loaded in', (performance.now() - t0).toFixed(0), 'ms')
 
       setParseStep('Reading file…')
@@ -73,6 +82,7 @@ export default function VehicleCatalogIngest() {
       await yieldToUI()
       const rows = xlsx.utils.sheet_to_json(ws, { defval: null })
       console.log('[ingest] parsed', rows.length, 'rows in', (performance.now() - t0).toFixed(0), 'ms total')
+      console.log('[ingest] first row keys:', rows[0] ? Object.keys(rows[0]) : '(empty)')
 
       setParseStep('Done.')
       setter(rows)
@@ -86,13 +96,40 @@ export default function VehicleCatalogIngest() {
 
   const handleBrandsFile = (file) => {
     if (!file) return
+    console.log('[ingest] file selected (brands):', file.name, file.size, 'bytes', file.type)
     setBrandsFile(file)
     parse(file, setBrandsRaw)
   }
   const handleModelsFile = (file) => {
     if (!file) return
+    console.log('[ingest] file selected (models):', file.name, file.size, 'bytes', file.type)
     setModelsFile(file)
     parse(file, setModelsRaw)
+  }
+
+  // CSV fallback — no xlsx dependency. The user exports each xlsx tab to
+  // CSV from Excel ("Save As → CSV UTF-8"). Trivial parser, no library
+  // needed.
+  const handleCsvForBrands = (file) => parseCsvFile(file, setBrandsRaw, 'brands', setBrandsFile, setParsing, setParseStep, setParseError)
+  const handleCsvForModels = (file) => parseCsvFile(file, setModelsRaw, 'models', setModelsFile, setParsing, setParseStep, setParseError)
+
+  // JSON paste fallback — last-resort path. User pastes a JSON array of
+  // objects with the same column names as the xlsx (VMakeID, VMakeDesc,
+  // VModelID, VMakeID, VModelDesc).
+  const [jsonPaste, setJsonPaste] = useState('')
+  const [pasteTarget, setPasteTarget] = useState('brands')
+  const applyJsonPaste = () => {
+    setParseError(null)
+    try {
+      const parsed = JSON.parse(jsonPaste)
+      if (!Array.isArray(parsed)) throw new Error('Paste must be a JSON array.')
+      console.log('[ingest] applied JSON paste:', parsed.length, 'rows →', pasteTarget)
+      if (pasteTarget === 'brands') setBrandsRaw(parsed)
+      else setModelsRaw(parsed)
+      setJsonPaste('')
+    } catch (err) {
+      setParseError(`JSON paste failed: ${err.message}`)
+    }
   }
 
   // Validate parsed brands + models before ingest. Computes delta vs
@@ -179,6 +216,7 @@ export default function VehicleCatalogIngest() {
             description="Vehicle make / brand list (54 rows in the source file)."
             file={brandsFile}
             onFile={handleBrandsFile}
+            onCsvFile={handleCsvForBrands}
             disabled={parsing || ingesting}
           />
           <FilePicker
@@ -186,9 +224,46 @@ export default function VehicleCatalogIngest() {
             description="Vehicle model list, joined to make by VMakeID (~352 rows)."
             file={modelsFile}
             onFile={handleModelsFile}
+            onCsvFile={handleCsvForModels}
             disabled={parsing || ingesting}
           />
         </div>
+
+        {/* JSON paste fallback — for when both file paths fail. */}
+        <details className="bg-white rounded-2xl border overflow-hidden">
+          <summary className="cursor-pointer bg-gray-50 px-4 py-3 text-[11px] uppercase tracking-widest font-bold text-gray-500 hover:bg-gray-100">
+            Last-resort: paste JSON
+          </summary>
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-gray-600">
+              Hit a wall with the file pickers? Convert the xlsx tab to JSON (e.g.
+              <a href="https://tableconvert.com/xlsx-to-json" target="_blank" rel="noreferrer" className="text-brand hover:underline mx-1">tableconvert.com/xlsx-to-json</a>
+              or any tool of your choice) and paste the array here. Keep the original column names: VMakeID/VMakeDesc for makes, VModelID/VMakeID/VModelDesc for models.
+            </p>
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-bold text-gray-700">Target:</label>
+              <select value={pasteTarget} onChange={(e) => setPasteTarget(e.target.value)} className="input">
+                <option value="brands">Brands (VMAKES)</option>
+                <option value="models">Models (VMODELS)</option>
+              </select>
+            </div>
+            <textarea
+              rows={8}
+              value={jsonPaste}
+              onChange={(e) => setJsonPaste(e.target.value)}
+              placeholder='[{"VMakeID": 1, "VMakeDesc": "AUDI"}, {"VMakeID": 3, "VMakeDesc": "BMW"}]'
+              className="input font-mono text-xs"
+            />
+            <button
+              type="button"
+              onClick={applyJsonPaste}
+              disabled={!jsonPaste.trim() || ingesting}
+              className="bg-gray-900 hover:bg-black disabled:opacity-40 text-white text-xs font-bold px-4 py-2 rounded-lg"
+            >
+              Apply paste
+            </button>
+          </div>
+        </details>
 
         {parsing && (
           <div className="bg-sky-50 border border-sky-200 rounded-xl px-3 py-2 text-sm text-sky-900 flex items-center gap-2">
@@ -252,17 +327,101 @@ export default function VehicleCatalogIngest() {
   )
 }
 
+// ── CSV fallback ──────────────────────────────────────────────────────────
+//
+// Tiny CSV parser. Handles quoted fields with commas + escaped quotes.
+// Inputs in the format Excel "Save As → CSV UTF-8" produces. We coerce
+// numeric-looking values to numbers so the downstream cleaners don't
+// have to special-case strings.
+
+function parseCsvText(text) {
+  const lines = []
+  let cur = []
+  let field = ''
+  let inQuotes = false
+  let i = 0
+  const flush = () => { cur.push(field); field = '' }
+  while (i < text.length) {
+    const c = text[i]
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue }
+        inQuotes = false; i++; continue
+      }
+      field += c; i++; continue
+    }
+    if (c === '"') { inQuotes = true; i++; continue }
+    if (c === ',') { flush(); i++; continue }
+    if (c === '\r') { i++; continue }
+    if (c === '\n') { flush(); lines.push(cur); cur = []; i++; continue }
+    field += c; i++
+  }
+  if (field !== '' || cur.length > 0) { flush(); lines.push(cur) }
+
+  if (lines.length === 0) return []
+  const header = lines[0].map((h) => String(h).trim())
+  const out = []
+  for (let r = 1; r < lines.length; r++) {
+    const row = lines[r]
+    if (row.length === 1 && row[0] === '') continue // skip blank lines
+    const obj = {}
+    for (let c = 0; c < header.length; c++) {
+      const key = header[c]
+      let val = row[c] != null ? row[c] : null
+      if (val === '') val = null
+      if (val != null && /^-?\d+(\.\d+)?$/.test(val.trim())) val = Number(val)
+      obj[key] = val
+    }
+    out.push(obj)
+  }
+  return out
+}
+
+async function parseCsvFile(file, setter, kind, setFile, setParsing, setParseStep, setParseError) {
+  if (!file) return
+  setFile(file)
+  setParsing(true); setParseError(null); setParseStep(`Reading ${kind} CSV…`)
+  console.log('[ingest] CSV file selected:', file.name, file.size, 'bytes')
+  try {
+    const text = await file.text()
+    setParseStep('Parsing CSV…')
+    await new Promise((r) => setTimeout(r, 0))
+    const rows = parseCsvText(text)
+    console.log('[ingest] CSV parsed:', rows.length, 'rows; first row keys:', rows[0] ? Object.keys(rows[0]) : '(empty)')
+    setter(rows)
+    setParseStep('Done.')
+  } catch (err) {
+    console.error('[ingest] CSV parse failed:', err)
+    setParseError(err.message || String(err))
+  } finally {
+    setParsing(false)
+  }
+}
+
 // ── Subcomponents ─────────────────────────────────────────────────────────
 
-function FilePicker({ title, description, file, onFile, disabled }) {
+function FilePicker({ title, description, file, onFile, onCsvFile, disabled }) {
+  // Route based on extension. CSV path uses the inline parser (no
+  // SheetJS dependency); xlsx/xls path goes through the lazy xlsx
+  // import. Mixed accept list so the user can pick whichever they have.
+  const handleChange = (e) => {
+    const f = e.target.files?.[0] || null
+    if (!f) return
+    const ext = f.name.toLowerCase().split('.').pop()
+    if (ext === 'csv' && onCsvFile) onCsvFile(f)
+    else onFile(f)
+  }
   return (
     <label className={`block bg-white rounded-2xl border-2 border-dashed p-4 cursor-pointer hover:border-brand hover:bg-gray-50 transition-colors ${disabled ? 'opacity-60 pointer-events-none' : ''}`}>
       <div className="font-bold text-gray-900 text-sm">{title}</div>
       <div className="text-xs text-gray-500 mt-0.5">{description}</div>
+      <div className="text-[11px] text-gray-500 mt-1.5 italic">
+        .xlsx (lazy SheetJS) or .csv (inline parser, faster + no dependency).
+      </div>
       <input
         type="file"
         accept=".xlsx,.xls,.csv"
-        onChange={(e) => onFile(e.target.files?.[0] || null)}
+        onChange={handleChange}
         className="block w-full mt-3 text-xs text-gray-600
           file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0
           file:text-xs file:font-bold file:bg-brand file:text-white
