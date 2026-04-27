@@ -91,8 +91,52 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
     return true
   })
 
+  // Round 23 — when the user clicks Submit on incomplete work, find the
+  // first issue, scroll to it, focus the missing field, and surface a
+  // specific message. Better than a silently-disabled button.
+  const findFirstBlocker = () => {
+    if (flagged.length === 0) return { kind: 'no-flagged' }
+    for (const i of flagged) {
+      const r = repairs[i.code] || {}
+      if (r.skip) continue
+      if (!r.partReplaced || !r.partReplaced.trim()) {
+        return { kind: 'missing-part', item: i, fieldId: `fix-${i.code}-part`, message: `Enter the part replaced for "${i.label}", or mark it Skip.` }
+      }
+      if (i.type === 'measurable' && !r.afterMeasure) {
+        return { kind: 'missing-measure', item: i, fieldId: `fix-${i.code}-measure`, message: `Enter the after-repair measurement (${i.unit || ''}) for "${i.label}".` }
+      }
+      // No explicit Repair/Skip pick yet — r.skip is undefined.
+      if (r.skip == null && !r.partReplaced) {
+        return { kind: 'undecided', item: i, fieldId: null, message: `Pick Repair or Skip for "${i.label}".` }
+      }
+    }
+    return null
+  }
+
+  const jumpTo = (blocker) => {
+    if (!blocker) return
+    const cardId = blocker.item ? `fix-item-${blocker.item.code}` : null
+    if (cardId) {
+      const el = document.getElementById(cardId)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+    // Focus a beat after scroll starts so the smooth-scroll isn't interrupted.
+    if (blocker.fieldId) {
+      setTimeout(() => {
+        const input = document.getElementById(blocker.fieldId)
+        if (input) input.focus()
+      }, 250)
+    }
+    setError(blocker.message)
+  }
+
   const handleSubmit = async () => {
-    if (!canSubmit || saving) return
+    if (saving) return
+    if (!canSubmit) {
+      const blocker = findFirstBlocker()
+      jumpTo(blocker)
+      return
+    }
     setSaving(true); setError(null)
     try {
       // Patch the item results: flagged items become `replaced` with the
@@ -164,7 +208,8 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
           return (
             <div
               key={item.code}
-              className={`rounded-2xl border-2 overflow-hidden ${skipped ? 'border-gray-300 opacity-70' : isCrit ? 'border-red-300' : 'border-amber-300'} bg-white`}
+              id={`fix-item-${item.code}`}
+              className={`rounded-2xl border-2 overflow-hidden ${skipped ? 'border-gray-300 opacity-70' : isCrit ? 'border-red-300' : 'border-amber-300'} bg-white scroll-mt-4`}
             >
               <div className={`px-4 py-3 flex items-start gap-2 ${skipped ? 'bg-gray-100' : isCrit ? 'bg-red-50' : 'bg-amber-50'}`}>
                 <span className={`shrink-0 text-xs font-black px-2 py-1 rounded-lg ${isCrit ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'}`}>
@@ -216,6 +261,7 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
                       Part Replaced *
                     </label>
                     <input
+                      id={`fix-${item.code}-part`}
                       value={r.partReplaced || ''}
                       onChange={(e) => updateRepair(item.code, 'partReplaced', e.target.value)}
                       placeholder="e.g. Brake Pad Set (Front)"
@@ -252,6 +298,7 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
                           After ({item.unit}) *
                         </label>
                         <input
+                          id={`fix-${item.code}-measure`}
                           type="number"
                           step="0.01"
                           value={r.afterMeasure || ''}
@@ -351,17 +398,20 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
         style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0))' }}
       >
         <div className="px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-3">
-          {error && <div className="text-[11px] text-red-700 flex-1 truncate">Save failed: {error}</div>}
+          {error && <div className="text-[11px] text-red-700 flex-1 truncate" title={error}>{error}</div>}
           <div className={`text-[11px] flex-1 min-w-0 ${error ? 'hidden' : ''}`}>
             {canSubmit
               ? <span className="text-gray-700"><span className="font-bold">{repairedCount}</span> repair{repairedCount === 1 ? '' : 's'}{skippedCount > 0 ? ` · ${skippedCount} skip` : ''}</span>
-              : <span className="text-gray-500">Fill in each repair or mark skip.</span>}
+              : <span className="text-gray-500">Tap Submit — we'll jump you to anything missing.</span>}
           </div>
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!canSubmit || saving}
-            className="bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow active:scale-95 transition-transform shrink-0"
+            disabled={saving}
+            className={`text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow active:scale-95 transition-transform shrink-0 ${
+              canSubmit ? 'bg-brand hover:bg-brand-dark' : 'bg-amber-600 hover:bg-amber-700'
+            } ${saving ? 'opacity-50' : ''}`}
+            title={canSubmit ? '' : 'Some items still need a part replaced or a measurement — click to jump there.'}
           >
             {saving ? 'Submitting…' : 'Submit Quick Fix'}
           </button>
