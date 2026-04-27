@@ -7,7 +7,11 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { isCustomer, canBookServices, roleLabel } from '../lib/roles'
+import {
+  isCustomer, roleLabel,
+  canBooking, canServiceRequest, canServiceQuotation,
+  canReports, canMyGarage, canScheduleService,
+} from '../lib/roles'
 import Icon from '../components/ui/Icon'
 
 function SectionHeader({ children }) {
@@ -99,13 +103,14 @@ export default function More() {
 }
 
 function CustomerMenu({ profile }) {
+  const role = profile?.role
   return (
     <>
       <SectionHeader>Fleet</SectionHeader>
       <div className="bg-white divide-y">
         <Row to="/portal/service-log" icon="doc" label="Service Log" />
-        {canBookServices(profile?.role) && (
-          <Row to="/appointments" icon="calendar" label="Book a Service" />
+        {canScheduleService(role) && (
+          <Row to="/portal/schedule-service" icon="calendar" label="Request for Service" />
         )}
       </div>
 
@@ -123,20 +128,21 @@ function CustomerMenu({ profile }) {
 }
 
 function StaffMenu({ profile }) {
+  const role = profile?.role
   return (
     <>
       <SectionHeader>Quick Links</SectionHeader>
       <div className="bg-white divide-y">
-        <Row to="/home/my-mechanics" icon="user" label="My Mechanics" />
-        <Row to="/appointments?quicklink=yes" icon="plus" label="+ Booking" />
-        <Row to="/service-receipts/create" icon="plus" label="+ Service Receipt" />
+        {canMyGarage(role) && <Row to="/home/my-mechanics" icon="user" label="My Mechanics" />}
+        {canBooking(role) && <Row to="/appointments?quicklink=yes" icon="plus" label="+ Booking" />}
+        {canServiceRequest(role) && <Row to="/service-receipts/create" icon="plus" label="+ Service Receipt" />}
       </div>
 
       <SectionHeader>Core Operations</SectionHeader>
       <div className="bg-white divide-y">
-        <Row to="/quotations" icon="doc" label="Service Quotations" />
-        <Row to="/quotations/unbilled" icon="doc" label="Services for Quotation" />
-        <Row to="/reports" icon="backlog" label="Reports" />
+        {canServiceQuotation(role) && <Row to="/quotations" icon="doc" label="Service Quotations" />}
+        {canServiceQuotation(role) && <Row to="/quotations/unbilled" icon="doc" label="Services for Quotation" />}
+        {canReports(role) && <Row to="/reports" icon="backlog" label="Reports" />}
       </div>
 
       <SectionHeader>Data Management</SectionHeader>

@@ -18,6 +18,7 @@ const COLLECTION = 'appointments'
 //   (TENTATIVE remains as the legacy "uncertain whether customer will show up"
 //    flag, orthogonal to the approval gate.)
 export const APPT_STATUS = Object.freeze({
+  PENDING_BOOKING: 'PENDING_BOOKING',
   PENDING_BRANCH_APPROVAL: 'PENDING_BRANCH_APPROVAL',
   BOOKED: 'BOOKED',
   CONFIRMED: 'CONFIRMED',
@@ -237,6 +238,52 @@ export async function rejectBookingAtBranch(id, reason) {
       company: appt.company || null,
     })
   }
+}
+
+// Fleet client requests a booking — creates an appointment with PENDING_BOOKING
+// status. Call center will assign the schedule. One appointment per plate.
+export async function requestBooking(vehicles, profile) {
+  if (!db) throw new Error('Firestore not configured.')
+  const uid = auth?.currentUser?.uid || null
+  const company = profile?.company_id || profile?.company || null
+  const clientName = profile?.name || profile?.email || 'Fleet Client'
+  const ids = []
+
+  for (const v of vehicles) {
+    const plate = (v.plateNo || '').toUpperCase().replace(/\s+/g, '')
+    if (!plate) continue
+    const ref = await addDoc(collection(db, COLLECTION), {
+      plateNo: plate,
+      brandModel: v.brandModel || '',
+      customer: clientName,
+      company: company,
+      branch: null,
+      mechanic: 'Not yet assigned',
+      scheduledAt: null,
+      scheduledTime: null,
+      status: APPT_STATUS.PENDING_BOOKING,
+      note: v.notes || 'BOOKING REQUESTED BY FLEET CLIENT',
+      createdAt: serverTimestamp(),
+      createdBy: uid,
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+    })
+    ids.push(ref.id)
+
+    emitNotification({
+      kind: 'booking',
+      title: `Booking request — ${plate}`,
+      body: `${company || 'Fleet client'} · ${clientName} · pending schedule`,
+      plateNo: plate,
+      appointmentId: ref.id,
+      link: `/appointments`,
+      branch: null,
+      company: null, // target internal staff, not the fleet client
+      target_roles: ['call_center'],
+    })
+  }
+
+  return ids
 }
 
 export async function assignMechanic(id, mechanicName) {

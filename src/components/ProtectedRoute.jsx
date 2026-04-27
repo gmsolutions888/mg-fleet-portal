@@ -1,8 +1,8 @@
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { defaultRouteForRole, getRoleInfo } from '../lib/roles'
+import { defaultRouteForRole, getRoleInfo, hasPermission } from '../lib/roles'
 
-export default function ProtectedRoute({ children, allowedCategories, requireAdmin }) {
+export default function ProtectedRoute({ children, allowedCategories, requireAdmin, requiredPermission }) {
   const { user, profile, loading } = useAuth()
   const location = useLocation()
 
@@ -25,6 +25,13 @@ export default function ProtectedRoute({ children, allowedCategories, requireAdm
   if (allowedCategories && profile && !profile.is_admin) {
     const info = getRoleInfo(profile.role)
     if (!info || !allowedCategories.includes(info.category)) {
+      return <Navigate to={defaultRouteForRole(profile.role)} replace />
+    }
+  }
+
+  // Per-feature permission gating (e.g. requiredPermission="booking")
+  if (requiredPermission && profile && !profile.is_admin) {
+    if (!hasPermission(profile.role, requiredPermission)) {
       return <Navigate to={defaultRouteForRole(profile.role)} replace />
     }
   }

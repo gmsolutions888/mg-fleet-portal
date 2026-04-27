@@ -1,5 +1,5 @@
 // Roles are stored as lowercase string enums on the users doc
-// (e.g. "fleet_manager"). This registry is the single source of truth for
+// (e.g. "field_assessor"). This registry is the single source of truth for
 // how the portal treats each role.
 //
 // category:
@@ -7,62 +7,137 @@
 //   'customer' — fleet customer (sidebar: Fleet / My Fleet / Quotations)
 //
 // defaultRoute — where to land after login.
-// canBookServices — whether "+ Book a Service" appears (customer view only).
+//
+// Feature permissions — boolean flags that gate access to specific areas:
+//   booking          — Service Bookings (/appointments)
+//   assessment       — Vehicle assessment (/appointments/:id/assess, /pms)
+//   serviceRequest   — Service Receipts (/service-receipts)
+//   serviceQuotation — Service Quotations (/quotations)
+//   reports          — Reports (/reports)
+//   myGarage         — My Garage dashboard + My Mechanics (/home)
+//   myFleet          — My Fleet (/portal/my-fleet)
+//   clientDashboard  — Fleet client dashboard (/portal)
+//   canApproveQuotations — Can approve/disapprove service quotations
 
 export const ROLE_REGISTRY = {
-  // --- fleet customer side ---
-  // Per the new flow: fleet clients no longer book directly. The MG Fleet
-  // Manager (mg_fleet_manager, internal) books on their behalf and forwards
-  // approved docs. Customer-side fleet_manager keeps quotation approval and
-  // view-only access only.
-  fleet_manager: {
-    label: 'Fleet Manager (Client)',
-    category: 'customer',
-    defaultRoute: '/portal',
-    canBookServices: false,
-    canApproveQuotations: true,
-  },
-  fleet_user: {
-    label: 'Fleet User',
-    category: 'customer',
-    defaultRoute: '/portal',
-    canBookServices: false,
-    canApproveQuotations: false,
-  },
-  customer: {
-    label: 'Customer',
-    category: 'customer',
-    defaultRoute: '/portal',
-    canBookServices: false,
-    canApproveQuotations: false,
-  },
-
-  // --- MG Fleet (the team that coordinates between fleet clients and branches) ---
-  mg_fleet_manager: {
-    label: 'MG Fleet Manager',
+  // --- internal (garage staff) ---
+  general_manager: {
+    label: 'General Manager',
     category: 'internal',
     defaultRoute: '/home',
-    canBookServices: true,
-    canForwardToClient: true,
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+    serviceQuotation: true,
+    reports: true,
+    myGarage: true,
+  },
+  admin_assistance: {
+    label: 'Admin Assistance',
+    category: 'internal',
+    defaultRoute: '/home',
+    booking: true,
+    serviceRequest: true,
+    serviceQuotation: true,
+    reports: true,
+    myGarage: true,
+  },
+  field_assessor: {
+    label: 'Field Assessor',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+  },
+  dispatcher: {
+    label: 'Dispatcher',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+  },
+  finance: {
+    label: 'Finance',
+    category: 'internal',
+    defaultRoute: '/quotations',
+    serviceQuotation: true,
+    reports: true,
+  },
+  warrior: {
+    label: 'Warrior',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+  },
+  operations_manager: {
+    label: 'Operations Manager',
+    category: 'internal',
+    defaultRoute: '/home',
+    booking: true,
+    serviceRequest: true,
+    serviceQuotation: true,
+    reports: true,
+    myGarage: true,
+  },
+  call_center: {
+    label: 'Call Center',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    serviceQuotation: true,
+  },
+  admin_supervisor: {
+    label: 'Admin Supervisor',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+    serviceQuotation: true,
+  },
+  finance_head: {
+    label: 'Finance Head',
+    category: 'internal',
+    defaultRoute: '/quotations',
+    serviceQuotation: true,
+    reports: true,
   },
 
-  // --- garage staff side ---
-  // Confirmed in production (2026-04-22): most staff have role 'technician'.
-  // The other internal roles below are registered for future use; create the
-  // accounts in /admin/users when the workflow needs them.
-  admin: { label: 'Admin', category: 'internal', defaultRoute: '/home' },
-  branch_manager: { label: 'Branch Manager', category: 'internal', defaultRoute: '/home', canReviewAtBranch: true },
-  admin_supervisor: { label: 'Admin Supervisor', category: 'internal', defaultRoute: '/home', canReviewAtBranch: true },
-  call_center: { label: 'Call Center', category: 'internal', defaultRoute: '/home' },
-  service_advisor: { label: 'Service Advisor', category: 'internal', defaultRoute: '/home' },
-  floor_supervisor: { label: 'Floor Supervisor', category: 'internal', defaultRoute: '/home' },
-  parts_man: { label: 'Parts Man', category: 'internal', defaultRoute: '/home' },
-  finance: { label: 'Finance', category: 'internal', defaultRoute: '/home' },
-  mechanic: { label: 'Mechanic', category: 'internal', defaultRoute: '/home' },
-  field_assessor: { label: 'Field Assessor', category: 'internal', defaultRoute: '/home', canAssess: true },
-  // Existing mg-fms users have role: 'technician'. Treated as a field assessor
-  // for now — they're the same persona (the person doing the inspection).
-  technician: { label: 'Technician', category: 'internal', defaultRoute: '/home', canAssess: true },
+  // --- customer (fleet clients) ---
+  fleet_client: {
+    label: 'Fleet Client',
+    category: 'customer',
+    defaultRoute: '/portal',
+    myFleet: true,
+    clientDashboard: true,
+    serviceQuotation: true,
+    scheduleService: true,
+  },
+  fleet_client_manager: {
+    label: 'Fleet Client Manager',
+    category: 'customer',
+    defaultRoute: '/portal',
+    myFleet: true,
+    clientDashboard: true,
+    serviceQuotation: true,
+    canApproveQuotations: true,
+    scheduleService: true,
+  },
+
+  // --- legacy / compatibility ---
+  // Existing mg-fms users may have role: 'technician'. Treated as field_assessor.
+  technician: {
+    label: 'Technician',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    booking: true,
+    assessment: true,
+    serviceRequest: true,
+  },
 }
 
 const normalize = (role) => String(role || '').toLowerCase().trim()
@@ -74,12 +149,28 @@ export const roleLabel = (role) => getRoleInfo(role)?.label || role || '—'
 export const isInternal = (role) => getRoleInfo(role)?.category === 'internal'
 export const isCustomer = (role) => getRoleInfo(role)?.category === 'customer'
 
-export const canBookServices = (role) => Boolean(getRoleInfo(role)?.canBookServices)
-export const canApproveQuotations = (role) =>
-  Boolean(getRoleInfo(role)?.canApproveQuotations)
-export const canReviewAtBranch = (role) => Boolean(getRoleInfo(role)?.canReviewAtBranch)
-export const canAssess = (role) => Boolean(getRoleInfo(role)?.canAssess)
-export const canForwardToClient = (role) => Boolean(getRoleInfo(role)?.canForwardToClient)
+// Feature permission helpers
+export const canBooking = (role) => Boolean(getRoleInfo(role)?.booking)
+export const canAssess = (role) => Boolean(getRoleInfo(role)?.assessment)
+export const canServiceRequest = (role) => Boolean(getRoleInfo(role)?.serviceRequest)
+export const canServiceQuotation = (role) => Boolean(getRoleInfo(role)?.serviceQuotation)
+export const canReports = (role) => Boolean(getRoleInfo(role)?.reports)
+export const canMyGarage = (role) => Boolean(getRoleInfo(role)?.myGarage)
+export const canMyFleet = (role) => Boolean(getRoleInfo(role)?.myFleet)
+export const canClientDashboard = (role) => Boolean(getRoleInfo(role)?.clientDashboard)
+export const canApproveQuotations = (role) => Boolean(getRoleInfo(role)?.canApproveQuotations)
+export const canScheduleService = (role) => Boolean(getRoleInfo(role)?.scheduleService)
+
+// Back-compat aliases used by existing code
+export const canBookServices = canBooking
+export const canReviewAtBranch = (role) => {
+  const r = normalize(role)
+  return r === 'general_manager' || r === 'admin_supervisor' || r === 'operations_manager'
+}
+export const canForwardToClient = (role) => {
+  const r = normalize(role)
+  return r === 'general_manager' || r === 'operations_manager' || r === 'call_center'
+}
 
 export const defaultRouteForRole = (role) => getRoleInfo(role)?.defaultRoute || '/login'
 
@@ -91,3 +182,7 @@ export const CUSTOMER_CATEGORY = 'customer'
 // Customer-category users without the is_admin escape hatch.
 export const isClientView = (profile) =>
   Boolean(profile) && isCustomer(profile.role) && !profile.is_admin
+
+// Check if a role has access to a specific permission.
+// Used by ProtectedRoute for per-feature gating.
+export const hasPermission = (role, permission) => Boolean(getRoleInfo(role)?.[permission])

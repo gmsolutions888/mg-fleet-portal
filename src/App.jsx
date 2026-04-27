@@ -31,6 +31,7 @@ import ServiceReceipts from './pages/ServiceReceipts'
 import ServiceReceiptCreate from './pages/ServiceReceiptCreate'
 import ServiceReceiptDetails from './pages/ServiceReceiptDetails'
 
+import ScheduleService from './pages/ScheduleService'
 import FleetCompanies from './pages/admin/FleetCompanies'
 import Users from './pages/admin/Users'
 import AuthComplete from './pages/AuthComplete'
@@ -56,33 +57,34 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          {/* Internal staff */}
-          <Route path="/home"                  element={<ProtectedRoute allowedCategories={INTERNAL}><Home /></ProtectedRoute>} />
+          {/* Internal staff — My Garage (requires myGarage permission) */}
+          <Route path="/home"                  element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="myGarage"><Home /></ProtectedRoute>} />
           <Route path="/home/notifications"    element={<ProtectedRoute allowedCategories={INTERNAL}><Notifications /></ProtectedRoute>} />
-          <Route path="/home/my-mechanics"     element={<ProtectedRoute allowedCategories={INTERNAL}><MyMechanics /></ProtectedRoute>} />
+          <Route path="/home/my-mechanics"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="myGarage"><MyMechanics /></ProtectedRoute>} />
 
-          {/* Appointments / Service Booking — both categories (fleet managers can book too) */}
-          <Route path="/appointments"                element={<ProtectedRoute allowedCategories={BOTH}><ServiceBooking /></ProtectedRoute>} />
-          <Route path="/appointments/:id/update"     element={<ProtectedRoute allowedCategories={INTERNAL}><VehicleServiceUpdate /></ProtectedRoute>} />
-          <Route path="/appointments/:id/assess"     element={<ProtectedRoute allowedCategories={INTERNAL}><AssessmentForm /></ProtectedRoute>} />
+          {/* Appointments / Service Booking (requires booking permission) */}
+          <Route path="/appointments"                element={<ProtectedRoute allowedCategories={BOTH} requiredPermission="booking"><ServiceBooking /></ProtectedRoute>} />
+          <Route path="/appointments/:id/update"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="booking"><VehicleServiceUpdate /></ProtectedRoute>} />
+          <Route path="/appointments/:id/assess"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="assessment"><AssessmentForm /></ProtectedRoute>} />
           {/* Back-compat: old /diagnose URLs bookmarked or linked from Firestore notifications. */}
           <Route path="/appointments/:id/diagnose"   element={<DiagnoseRedirect />} />
-          <Route path="/appointments/:id/pms"        element={<ProtectedRoute allowedCategories={INTERNAL}><PmsRecord /></ProtectedRoute>} />
-          <Route path="/appointments/:id/assign"     element={<ProtectedRoute allowedCategories={INTERNAL}><AssignMechanic /></ProtectedRoute>} />
+          <Route path="/appointments/:id/pms"        element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="assessment"><PmsRecord /></ProtectedRoute>} />
+          <Route path="/appointments/:id/assign"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="booking"><AssignMechanic /></ProtectedRoute>} />
 
-          {/* Quotations */}
-          <Route path="/quotations"            element={<ProtectedRoute allowedCategories={INTERNAL}><Quotations /></ProtectedRoute>} />
-          <Route path="/quotations/unbilled"   element={<ProtectedRoute allowedCategories={INTERNAL}><Quotations unbilledOnly /></ProtectedRoute>} />
-          <Route path="/quotations/create"     element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceiptCreate kind="quotation" /></ProtectedRoute>} />
+          {/* Quotations (requires serviceQuotation permission) */}
+          <Route path="/quotations"            element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><Quotations /></ProtectedRoute>} />
+          <Route path="/quotations/unbilled"   element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><Quotations unbilledOnly /></ProtectedRoute>} />
+          <Route path="/quotations/create"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><ServiceReceiptCreate kind="quotation" /></ProtectedRoute>} />
 
-          {/* Service Receipts */}
-          <Route path="/service-receipts"        element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceipts /></ProtectedRoute>} />
-          <Route path="/service-receipts/create" element={<ProtectedRoute allowedCategories={INTERNAL}><ServiceReceiptCreate /></ProtectedRoute>} />
+          {/* Service Receipts (requires serviceRequest permission) */}
+          <Route path="/service-receipts"        element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceRequest"><ServiceReceipts /></ProtectedRoute>} />
+          <Route path="/service-receipts/create" element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceRequest"><ServiceReceiptCreate /></ProtectedRoute>} />
           <Route path="/service-receipts/:code"  element={<ProtectedRoute allowedCategories={BOTH}><ServiceReceiptDetails /></ProtectedRoute>} />
 
-          <Route path="/reports"               element={<ProtectedRoute allowedCategories={INTERNAL}><Reports /></ProtectedRoute>} />
+          {/* Reports (requires reports permission) */}
+          <Route path="/reports"               element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="reports"><Reports /></ProtectedRoute>} />
 
-          {/* Data management */}
+          {/* Data management — available to all internal roles */}
           <Route path="/customers"             element={<ProtectedRoute allowedCategories={INTERNAL}><Customers /></ProtectedRoute>} />
           <Route path="/vehicles"              element={<ProtectedRoute allowedCategories={INTERNAL}><Vehicles /></ProtectedRoute>} />
           <Route path="/vehicles/search"       element={<ProtectedRoute allowedCategories={BOTH}>{ph('Vehicle Search', 'Jump straight to a plate from the topbar.')}</ProtectedRoute>} />
@@ -92,11 +94,12 @@ export default function App() {
           <Route path="/services"              element={<ProtectedRoute allowedCategories={INTERNAL}><Services /></ProtectedRoute>} />
 
           {/* Fleet customer */}
-          <Route path="/portal"                element={<ProtectedRoute allowedCategories={CUSTOMER}><Portal /></ProtectedRoute>} />
+          <Route path="/portal"                element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="clientDashboard"><Portal /></ProtectedRoute>} />
           <Route path="/portal/notifications"  element={<ProtectedRoute allowedCategories={CUSTOMER}><Notifications /></ProtectedRoute>} />
-          <Route path="/portal/my-fleet"       element={<ProtectedRoute allowedCategories={CUSTOMER}><MyFleet /></ProtectedRoute>} />
+          <Route path="/portal/my-fleet"       element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="myFleet"><MyFleet /></ProtectedRoute>} />
           <Route path="/portal/service-log"    element={<ProtectedRoute allowedCategories={CUSTOMER}><ServiceLog /></ProtectedRoute>} />
-          <Route path="/portal/quotations"     element={<ProtectedRoute allowedCategories={CUSTOMER}><Quotations customerView /></ProtectedRoute>} />
+          <Route path="/portal/quotations"     element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="serviceQuotation"><Quotations customerView /></ProtectedRoute>} />
+          <Route path="/portal/schedule-service" element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="scheduleService"><ScheduleService /></ProtectedRoute>} />
 
           {/* Admin (gated by is_admin flag, not by role category) */}
           <Route path="/admin/fleet-companies" element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />

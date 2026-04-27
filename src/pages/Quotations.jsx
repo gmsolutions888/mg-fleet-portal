@@ -64,13 +64,13 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const opts = { kind: 'quotation', dummyFallback: true }
+    const opts = { kind: 'quotation', dummyFallback: !customerView }
     if (companyFilter) opts.company = companyFilter
     const unsub = watchReceipts(opts, ({ rows, source }) => {
       setRows(rows); setSource(source)
     })
     return unsub
-  }, [companyFilter])
+  }, [companyFilter, customerView])
 
   // Apply customer visibility filter once, then filter UI the rest downstream.
   const visible = useMemo(() => {

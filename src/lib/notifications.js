@@ -31,6 +31,11 @@ function audienceQuery(profile) {
   if (profile?.branch) {
     return query(base, where('branch', '==', profile.branch), orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
   }
+  // Internal users without a branch (e.g. call_center) only see booking
+  // request notifications — they don't need branch-scoped ops notifications.
+  if (!isCustomer(profile?.role)) {
+    return query(base, where('kind', '==', 'booking'), orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
+  }
   return null
 }
 

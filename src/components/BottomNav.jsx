@@ -9,7 +9,7 @@
 
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { isCustomer, canBookServices } from '../lib/roles'
+import { isCustomer, canMyGarage, canBooking, canServiceRequest } from '../lib/roles'
 import Icon from './ui/Icon'
 
 function Tab({ to, icon, label, end = false }) {
@@ -28,39 +28,30 @@ function Tab({ to, icon, label, end = false }) {
   )
 }
 
-// Customer tabs — what a fleet client sees first when they open the app.
-// Dashboard + My Fleet + Notifications cover the three things they actually
-// use. Quotations is promoted because approvers come here daily. "+ Book a
-// Service" stays off the tab bar — fleet_coordinator role can still reach
-// it via More, and the MG Fleet workflow change moves most bookings to MG.
-const CUSTOMER_TABS = (profile) => {
-  const tabs = [
-    { to: '/portal',               icon: 'home',     label: 'Dashboard', end: true },
-    { to: '/portal/my-fleet',      icon: 'car',      label: 'My Fleet' },
-    { to: '/portal/notifications', icon: 'bell',     label: 'Alerts' },
-    { to: '/portal/quotations',    icon: 'doc',      label: 'Quotations' },
-    { to: '/more',                 icon: 'grid',     label: 'More' },
-  ]
+const CUSTOMER_TABS = () => [
+  { to: '/portal',               icon: 'home',     label: 'Dashboard', end: true },
+  { to: '/portal/my-fleet',      icon: 'car',      label: 'My Fleet' },
+  { to: '/portal/notifications', icon: 'bell',     label: 'Alerts' },
+  { to: '/portal/quotations',    icon: 'doc',      label: 'Quotations' },
+  { to: '/more',                 icon: 'grid',     label: 'More' },
+]
+
+const STAFF_TABS = (role) => {
+  const tabs = []
+  if (canMyGarage(role)) tabs.push({ to: '/home', icon: 'home', label: 'Garage', end: true })
+  if (canBooking(role)) tabs.push({ to: '/appointments', icon: 'calendar', label: 'Bookings', end: true })
+  tabs.push({ to: '/home/notifications', icon: 'bell', label: 'Alerts' })
+  if (canServiceRequest(role)) tabs.push({ to: '/service-receipts', icon: 'receipt', label: 'Receipts', end: true })
+  tabs.push({ to: '/more', icon: 'grid', label: 'More' })
   return tabs
 }
-
-// Staff tabs — My Garage is the daily driver. Bookings second. Receipts is
-// promoted over Quotations because staff create receipts, clients approve
-// quotations. Everything else goes to More.
-const STAFF_TABS = () => ([
-  { to: '/home',              icon: 'home',     label: 'Garage', end: true },
-  { to: '/appointments',      icon: 'calendar', label: 'Bookings', end: true },
-  { to: '/home/notifications',icon: 'bell',     label: 'Alerts' },
-  { to: '/service-receipts',  icon: 'receipt',  label: 'Receipts', end: true },
-  { to: '/more',              icon: 'grid',     label: 'More' },
-])
 
 export default function BottomNav() {
   const { profile } = useAuth()
   if (!profile) return null
   // Admins see the staff bar regardless — same escape hatch as Sidebar.
   const customerView = isCustomer(profile.role) && !profile.is_admin
-  const tabs = customerView ? CUSTOMER_TABS(profile) : STAFF_TABS()
+  const tabs = customerView ? CUSTOMER_TABS() : STAFF_TABS(profile.role)
 
   return (
     <nav

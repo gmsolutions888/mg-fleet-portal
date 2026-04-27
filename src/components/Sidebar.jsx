@@ -5,9 +5,18 @@
 
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { isCustomer, canBookServices, roleLabel } from '../lib/roles'
+import {
+  isCustomer, roleLabel,
+  canBooking, canAssess, canServiceRequest, canServiceQuotation,
+  canReports, canMyGarage, canMyFleet, canClientDashboard, canScheduleService,
+} from '../lib/roles'
 
 function Section({ title, children }) {
+  // Don't render section if no children are truthy
+  const hasItems = Array.isArray(children)
+    ? children.some(Boolean)
+    : Boolean(children)
+  if (!hasItems) return null
   return (
     <div className="mb-3">
       <div className="px-4 pt-4 pb-1 text-[11px] uppercase tracking-wider text-sidebar-heading font-semibold">
@@ -99,14 +108,12 @@ export default function Sidebar() {
       <aside className={shellClasses}>
         <Brand />
         <Section title="Fleet">
-          <Item to="/portal" label="Fleet Dashboard" />
-          <Item to="/portal/my-fleet" label="My Fleet" />
+          {canClientDashboard(role) && <Item to="/portal" label="Fleet Dashboard" />}
+          {canMyFleet(role) && <Item to="/portal/my-fleet" label="My Fleet" />}
           <Item to="/portal/service-log" label="Service Log" />
           <Item to="/portal/notifications" label="Notifications" />
-          <Item to="/portal/quotations" label="Service Quotations" />
-          {canBookServices(role) && (
-            <Item to="/appointments" label="+ Book a Service" />
-          )}
+          {canServiceQuotation(role) && <Item to="/portal/quotations" label="Service Quotations" />}
+          {canScheduleService(role) && <Item to="/portal/schedule-service" label="+ Request for Service" />}
         </Section>
         <AdminSection profile={profile} />
         <Footer profile={profile} />
@@ -118,18 +125,18 @@ export default function Sidebar() {
     <aside className={shellClasses}>
       <Brand />
       <Section title="Quick Links">
-        <Item to="/home" label="My Garage" />
-        <Item to="/home/my-mechanics" label="My Mechanics" />
-        <Item to="/appointments?quicklink=yes" label="+ Booking" />
-        <Item to="/service-receipts/create" label="+ Service Receipt" />
+        {canMyGarage(role) && <Item to="/home" label="My Garage" />}
+        {canMyGarage(role) && <Item to="/home/my-mechanics" label="My Mechanics" />}
+        {canBooking(role) && <Item to="/appointments?quicklink=yes" label="+ Booking" />}
+        {canServiceRequest(role) && <Item to="/service-receipts/create" label="+ Service Receipt" />}
         <Item to="/home/notifications" label="Notifications" />
       </Section>
       <Section title="Core Operations">
-        <Item to="/appointments" label="Service Bookings" />
-        <Item to="/service-receipts" label="Service Receipts" />
-        <Item to="/quotations" label="Service Quotations" />
-        <Item to="/quotations/unbilled" label="Services for Quotation" />
-        <Item to="/reports" label="Reports" />
+        {canBooking(role) && <Item to="/appointments" label="Service Bookings" />}
+        {canServiceRequest(role) && <Item to="/service-receipts" label="Service Receipts" />}
+        {canServiceQuotation(role) && <Item to="/quotations" label="Service Quotations" />}
+        {canServiceQuotation(role) && <Item to="/quotations/unbilled" label="Services for Quotation" />}
+        {canReports(role) && <Item to="/reports" label="Reports" />}
       </Section>
       <Section title="Data Management">
         <Item to="/customers" label="Customers" />
