@@ -85,16 +85,28 @@ async function nextCreditNoteNumber() {
 
 export function watchCreditNotes(options, cb) {
   if (!db) { cb({ rows: [], source: 'unconfigured', error: null }); return () => {} }
+  // Avoid where()+orderBy() composite-index requirement: drop orderBy
+  // when filters are applied and sort client-side.
   const filters = []
   if (options?.kind)    filters.push(where('kind',    '==', options.kind))
   if (options?.company) filters.push(where('company', '==', options.company))
   if (options?.branch)  filters.push(where('branch',  '==', options.branch))
   const q = filters.length > 0
-    ? query(collection(db, COLLECTION), ...filters, orderBy('issuedAt', 'desc'))
+    ? query(collection(db, COLLECTION), ...filters)
     : query(collection(db, COLLECTION), orderBy('issuedAt', 'desc'))
   return onSnapshot(
     q,
-    (snap) => cb({ rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })), source: 'firestore', error: null }),
+    (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      if (filters.length > 0) {
+        rows.sort((a, b) => {
+          const ax = Date.parse(a?.issuedAtIso || '') || 0
+          const bx = Date.parse(b?.issuedAtIso || '') || 0
+          return bx - ax
+        })
+      }
+      cb({ rows, source: 'firestore', error: null })
+    },
     (err) => {
       console.warn('[creditNotes] listener error:', err)
       cb({ rows: [], source: 'error', error: err })

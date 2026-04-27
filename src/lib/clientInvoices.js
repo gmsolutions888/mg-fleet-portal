@@ -150,14 +150,26 @@ async function nextInvoiceNumber() {
 
 export function watchClientInvoices(options, cb) {
   if (!db) { cb({ rows: [], source: 'unconfigured', error: null }); return () => {} }
-  const filters = []
-  if (options?.company) filters.push(where('company', '==', options.company))
-  const q = filters.length > 0
-    ? query(collection(db, COLLECTION), ...filters, orderBy('issuedAt', 'desc'))
+  // When filtering by `company`, Firestore needs a composite index to
+  // combine where('company') + orderBy('issuedAt'). Sort client-side
+  // instead so the page works without an index deploy. Volume is low
+  // (tens to low-hundreds per company) — sorting in JS is free here.
+  const q = options?.company
+    ? query(collection(db, COLLECTION), where('company', '==', options.company))
     : query(collection(db, COLLECTION), orderBy('issuedAt', 'desc'))
   return onSnapshot(
     q,
-    (snap) => cb({ rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })), source: 'firestore', error: null }),
+    (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      if (options?.company) {
+        rows.sort((a, b) => {
+          const ax = Date.parse(a?.issuedAtIso || '') || 0
+          const bx = Date.parse(b?.issuedAtIso || '') || 0
+          return bx - ax
+        })
+      }
+      cb({ rows, source: 'firestore', error: null })
+    },
     (err) => {
       console.warn('[clientInvoices] listener error:', err)
       cb({ rows: [], source: 'error', error: err })
