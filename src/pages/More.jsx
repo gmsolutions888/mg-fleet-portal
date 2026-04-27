@@ -106,6 +106,7 @@ function CustomerMenu({ profile }) {
         <Row to="/portal/service-log" icon="doc" label="Service Log" />
         <Row to="/portal/quotations" icon="doc" label="Service Quotations" />
         <Row to="/portal/invoices" icon="doc" label="My Invoices" />
+        <Row to="/portal/statement" icon="doc" label="Statement of Account" />
         {canBookServices(profile?.role) && (
           <Row to="/appointments" icon="calendar" label="Book a Service" />
         )}
@@ -141,6 +142,7 @@ function StaffMenu({ profile }) {
         <Row to="/branch-invoices" icon="doc" label="Branch Invoices" />
         <Row to="/client-invoices" icon="doc" label="Client Invoices" />
         <Row to="/credit-notes" icon="doc" label="Credit Notes" />
+        <Row to="/reports/receivables" icon="backlog" label="Receivables Aging" />
         <Row to="/reports" icon="backlog" label="Reports" />
       </div>
 

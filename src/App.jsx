@@ -36,6 +36,8 @@ import ClientInvoices from './pages/ClientInvoices'
 import ClientInvoiceDetails from './pages/ClientInvoiceDetails'
 import CreditNotes from './pages/CreditNotes'
 import CreditNoteDetails from './pages/CreditNoteDetails'
+import ReceivablesReport from './pages/ReceivablesReport'
+import StatementOfAccount from './pages/StatementOfAccount'
 
 import FleetCompanies from './pages/admin/FleetCompanies'
 import Users from './pages/admin/Users'
@@ -98,7 +100,9 @@ export default function App() {
           <Route path="/credit-notes"          element={<ProtectedRoute allowedCategories={INTERNAL}><CreditNotes /></ProtectedRoute>} />
           <Route path="/credit-notes/:code"    element={<ProtectedRoute allowedCategories={BOTH}><CreditNoteDetails /></ProtectedRoute>} />
 
-          <Route path="/reports"               element={<ProtectedRoute allowedCategories={INTERNAL}><Reports /></ProtectedRoute>} />
+          <Route path="/reports"                  element={<ProtectedRoute allowedCategories={INTERNAL}><Reports /></ProtectedRoute>} />
+          <Route path="/reports/receivables"      element={<ProtectedRoute allowedCategories={INTERNAL}><ReceivablesReport /></ProtectedRoute>} />
+          <Route path="/reports/soa/:company"     element={<ProtectedRoute allowedCategories={INTERNAL}><StatementOfAccount /></ProtectedRoute>} />
 
           {/* Data management */}
           <Route path="/customers"             element={<ProtectedRoute allowedCategories={INTERNAL}><Customers /></ProtectedRoute>} />
@@ -116,6 +120,7 @@ export default function App() {
           <Route path="/portal/service-log"    element={<ProtectedRoute allowedCategories={CUSTOMER}><ServiceLog /></ProtectedRoute>} />
           <Route path="/portal/quotations"     element={<ProtectedRoute allowedCategories={CUSTOMER}><Quotations customerView /></ProtectedRoute>} />
           <Route path="/portal/invoices"       element={<ProtectedRoute allowedCategories={CUSTOMER}><ClientInvoices customerView /></ProtectedRoute>} />
+          <Route path="/portal/statement"      element={<ProtectedRoute allowedCategories={CUSTOMER}><StatementOfAccount customerView /></ProtectedRoute>} />
 
           {/* Admin (gated by is_admin flag, not by role category) */}
           <Route path="/admin/fleet-companies" element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />

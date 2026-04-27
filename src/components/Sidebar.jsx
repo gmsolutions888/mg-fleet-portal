@@ -105,6 +105,7 @@ export default function Sidebar() {
           <Item to="/portal/notifications" label="Notifications" />
           <Item to="/portal/quotations" label="Service Quotations" />
           <Item to="/portal/invoices" label="My Invoices" />
+          <Item to="/portal/statement" label="Statement of Account" />
           {canBookServices(role) && (
             <Item to="/appointments" label="+ Book a Service" />
           )}
@@ -133,6 +134,7 @@ export default function Sidebar() {
         <Item to="/branch-invoices" label="Branch Invoices" />
         <Item to="/client-invoices" label="Client Invoices" />
         <Item to="/credit-notes" label="Credit Notes" />
+        <Item to="/reports/receivables" label="Receivables Aging" />
         <Item to="/reports" label="Reports" />
       </Section>
       <Section title="Data Management">
