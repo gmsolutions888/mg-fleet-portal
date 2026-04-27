@@ -71,10 +71,10 @@ export default function ServiceBooking() {
   const [vehicles, setVehicles] = useState([])
 
   useEffect(() => {
-    const u1 = watchAppointments({ dummyFallback: true }, ({ rows, source }) => {
+    const u1 = watchAppointments({}, ({ rows, source }) => {
       setAppointments(rows); setSource(source)
     })
-    const u2 = watchVehicles({ dummyFallback: true }, ({ vehicles }) => setVehicles(vehicles))
+    const u2 = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
     return () => { u1?.(); u2?.() }
   }, [])
 
@@ -136,9 +136,9 @@ export default function ServiceBooking() {
         right={<HeroStat value={stats.confirmed} label="TODAY" tone="solid" />}
       />
 
-      {source === 'dummy' && (
-        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          Showing demo data.
+      {source === 'error' && (
+        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          Read blocked — check Firestore rules.
         </div>
       )}
 

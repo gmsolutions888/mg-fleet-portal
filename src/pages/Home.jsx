@@ -52,10 +52,10 @@ export default function Home() {
   const [source, setSource] = useState('loading')
 
   useEffect(() => {
-    const u1 = watchAppointments({ dummyFallback: true }, ({ rows, source }) => {
+    const u1 = watchAppointments({}, ({ rows, source }) => {
       setRaw(rows); setSource(source)
     })
-    const u2 = watchVehicles({ dummyFallback: true }, ({ vehicles }) => setVehicles(vehicles))
+    const u2 = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
     return () => { u1?.(); u2?.() }
   }, [])
 
@@ -112,9 +112,9 @@ export default function Home() {
         right={<HeroStat value={summary.carsInGarage} label="IN GARAGE" tone="solid" />}
       />
 
-      {source === 'dummy' && (
-        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          Showing demo data — Firestore appointments collection is empty or unreachable.
+      {source === 'error' && (
+        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          Read blocked — check Firestore rules for the appointments collection.
         </div>
       )}
 

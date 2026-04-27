@@ -29,7 +29,7 @@ export default function AssignMechanic() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const unsub = watchAppointments({ dummyFallback: true }, ({ rows }) => setRows(rows))
+    const unsub = watchAppointments({}, ({ rows }) => setRows(rows))
     return unsub
   }, [])
 

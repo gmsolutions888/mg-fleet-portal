@@ -2,31 +2,39 @@
 // "DIAGNOSED", etc.) seen in the VehicleServiceUpdate side panel.
 
 import {
-  addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, where,
+  addDoc, collection, onSnapshot, query, serverTimestamp, where,
 } from 'firebase/firestore'
 import { auth, db } from './firebase'
-import { SERVICE_UPDATES as DUMMY } from './dummyData'
 import { emitNotification, fetchContextDoc } from './notifications'
 
 const COLLECTION = 'vehicleServiceUpdates'
 
 export function watchUpdatesForPlate(plateNo, cb) {
-  if (!db) { cb({ rows: DUMMY[plateNo] || [], source: 'dummy' }); return () => {} }
+  if (!db) { cb({ rows: [], source: 'unconfigured' }); return () => {} }
+  // Round 31 — dummy fallback removed.
+  // Drop orderBy to avoid composite-index requirement; sort client-side.
   const q = query(
     collection(db, COLLECTION),
     where('plateNo', '==', (plateNo || '').toUpperCase().replace(/\s+/g, '')),
-    orderBy('createdAt', 'desc'),
   )
   return onSnapshot(
     q,
     (snap) => {
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      if (rows.length === 0) cb({ rows: DUMMY[plateNo] || [], source: 'dummy' })
-      else cb({ rows, source: 'firestore' })
+      rows.sort((a, b) => {
+        const ax = Date.parse(
+          a?.createdAt?.toDate?.()?.toISOString?.() || a?.createdAt || '',
+        ) || 0
+        const bx = Date.parse(
+          b?.createdAt?.toDate?.()?.toISOString?.() || b?.createdAt || '',
+        ) || 0
+        return bx - ax
+      })
+      cb({ rows, source: 'firestore' })
     },
     (err) => {
       console.warn('[serviceUpdates] listener error:', err)
-      cb({ rows: DUMMY[plateNo] || [], source: 'error', error: err })
+      cb({ rows: [], source: 'error', error: err })
     },
   )
 }

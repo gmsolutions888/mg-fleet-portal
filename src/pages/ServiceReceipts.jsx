@@ -30,7 +30,7 @@ export default function ServiceReceipts() {
   const [source, setSource] = useState('loading')
 
   useEffect(() => {
-    const unsub = watchReceipts({ kind: 'receipt', dummyFallback: true }, ({ rows, source }) => {
+    const unsub = watchReceipts({ kind: 'receipt' }, ({ rows, source }) => {
       setRows(rows); setSource(source)
     })
     return unsub
@@ -60,9 +60,9 @@ export default function ServiceReceipts() {
         right={<HeroStat value={counts.OPEN} label="OPEN" tone="solid" />}
       />
 
-      {source === 'dummy' && (
-        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-          Showing demo data.
+      {source === 'error' && (
+        <div className="mx-3 sm:mx-6 mt-3 text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          Read blocked — check Firestore rules.
         </div>
       )}
 

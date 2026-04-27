@@ -337,7 +337,7 @@ function buildHistoryFromAssessments(assessments /* , pmsRecord */) {
 export async function loadVehiclesForUser(profile) {
   return new Promise((resolve) => {
     const unsub = watchVehicles(
-      { company: profileCompany(profile), dummyFallback: true },
+      { company: profileCompany(profile) },
       ({ vehicles, source }) => {
         unsub()
         resolve({ rows: vehicles, source })

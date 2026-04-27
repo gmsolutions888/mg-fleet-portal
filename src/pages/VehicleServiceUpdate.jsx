@@ -30,7 +30,7 @@ export default function VehicleServiceUpdate() {
   const [quoteApproved, setQuoteApproved] = useState(null)
 
   useEffect(() => {
-    const u1 = watchAppointments({ dummyFallback: true }, ({ rows }) => {
+    const u1 = watchAppointments({}, ({ rows }) => {
       setAppt(rows.find((a) => a.id === id) || rows[0] || null)
     })
     return u1
@@ -38,7 +38,7 @@ export default function VehicleServiceUpdate() {
 
   useEffect(() => {
     if (!appt?.plateNo) return
-    const u2 = watchVehicles({ dummyFallback: true }, ({ vehicles }) => {
+    const u2 = watchVehicles({}, ({ vehicles }) => {
       setVehicle(vehicles.find((v) => v.plateNo === appt.plateNo) || null)
     })
     const u3 = watchUpdatesForPlate(appt.plateNo, ({ rows }) => setUpdates(rows))

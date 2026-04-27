@@ -10,7 +10,6 @@ import {
   query, serverTimestamp, updateDoc, where,
 } from 'firebase/firestore'
 import { auth, db } from './firebase'
-import { SERVICE_RECEIPTS as DUMMY } from './dummyData'
 import { emitNotification, fetchContextDoc } from './notifications'
 import {
   canApproveQuotations, canForwardToClient, canReviewAtBranch, isCustomer,
@@ -579,27 +578,38 @@ export async function addQuotationComment(id, { text, byProfile }) {
 }
 
 export function watchReceipts(options, cb) {
-  if (!db) { cb({ rows: DUMMY, source: 'dummy', loading: false, error: null }); return () => {} }
+  if (!db) { cb({ rows: [], source: 'unconfigured', loading: false, error: null }); return () => {} }
+  // Round 31 — dummy fallback removed; production users now see an
+  // empty list when there's no real data.
+  // Round 27.2 fix — drop orderBy when filters are applied to avoid
+  // requiring composite indexes for every where+order combo.
   const filters = []
   if (options?.kind) filters.push(where('kind', '==', options.kind))
   if (options?.branch) filters.push(where('branch', '==', options.branch))
   if (options?.company) filters.push(where('company', '==', options.company))
   const q = filters.length > 0
-    ? query(collection(db, COLLECTION), ...filters, orderBy('createdAt', 'desc'))
+    ? query(collection(db, COLLECTION), ...filters)
     : query(collection(db, COLLECTION), orderBy('createdAt', 'desc'))
   return onSnapshot(
     q,
     (snap) => {
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      if (rows.length === 0 && options?.dummyFallback !== false) {
-        cb({ rows: DUMMY, source: 'dummy', loading: false, error: null })
-      } else {
-        cb({ rows, source: 'firestore', loading: false, error: null })
+      if (filters.length > 0) {
+        rows.sort((a, b) => {
+          const ax = Date.parse(
+            a?.createdAt?.toDate?.()?.toISOString?.() || a?.createdAt || a?.created_at || '',
+          ) || 0
+          const bx = Date.parse(
+            b?.createdAt?.toDate?.()?.toISOString?.() || b?.createdAt || b?.created_at || '',
+          ) || 0
+          return bx - ax
+        })
       }
+      cb({ rows, source: 'firestore', loading: false, error: null })
     },
     (err) => {
       console.warn('[serviceReceipts] listener error:', err)
-      cb({ rows: DUMMY, source: 'error', loading: false, error: err })
+      cb({ rows: [], source: 'error', loading: false, error: err })
     },
   )
 }
@@ -644,7 +654,7 @@ export function watchReceiptByCode(code, cb) {
 }
 
 export async function getReceipt(codeOrId) {
-  if (!db) return DUMMY.find((r) => r.code === codeOrId) || null
+  if (!db) return null
   // First try as a direct doc id
   try {
     const direct = await getDoc(doc(db, COLLECTION, codeOrId))
@@ -659,7 +669,7 @@ export async function getReceipt(codeOrId) {
     )
   })
   if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() }
-  return DUMMY.find((r) => r.code === codeOrId) || null
+  return null
 }
 
 export async function createReceipt(kind, data) {

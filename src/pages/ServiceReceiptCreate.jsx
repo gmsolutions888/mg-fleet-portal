@@ -52,7 +52,7 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
 
   const [vehicles, setVehicles] = useState([])
   useEffect(() => {
-    const unsub = watchVehicles({ dummyFallback: true }, ({ vehicles }) => setVehicles(vehicles))
+    const unsub = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
     return unsub
   }, [])
 

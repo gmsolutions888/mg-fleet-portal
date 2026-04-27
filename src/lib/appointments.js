@@ -6,7 +6,6 @@ import {
   serverTimestamp, updateDoc, where,
 } from 'firebase/firestore'
 import { auth, db } from './firebase'
-import { APPOINTMENTS as DUMMY } from './dummyData'
 import { emitNotification, fetchContextDoc } from './notifications'
 import { hasApprovedQuotationForPlate } from './serviceReceipts'
 
@@ -33,22 +32,32 @@ export const APPT_STATUS = Object.freeze({
 })
 
 export function watchAppointments(options, cb) {
-  if (!db) { cb({ rows: DUMMY, source: 'dummy', loading: false, error: null }); return () => {} }
-  let q = query(collection(db, COLLECTION), orderBy('scheduledAt', 'desc'))
-  if (options?.branch) q = query(collection(db, COLLECTION), where('branch', '==', options.branch), orderBy('scheduledAt', 'desc'))
+  if (!db) { cb({ rows: [], source: 'unconfigured', loading: false, error: null }); return () => {} }
+  // Round 31 — dummy fallback removed; production users now see an
+  // empty list when there's no real data.
+  // Drop orderBy when filtered to avoid composite-index requirement.
+  let q
+  if (options?.branch) {
+    q = query(collection(db, COLLECTION), where('branch', '==', options.branch))
+  } else {
+    q = query(collection(db, COLLECTION), orderBy('scheduledAt', 'desc'))
+  }
   return onSnapshot(
     q,
     (snap) => {
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      if (rows.length === 0 && options?.dummyFallback !== false) {
-        cb({ rows: DUMMY, source: 'dummy', loading: false, error: null })
-      } else {
-        cb({ rows, source: 'firestore', loading: false, error: null })
+      if (options?.branch) {
+        rows.sort((a, b) => {
+          const ax = Date.parse(a?.scheduledAt || '') || 0
+          const bx = Date.parse(b?.scheduledAt || '') || 0
+          return bx - ax
+        })
       }
+      cb({ rows, source: 'firestore', loading: false, error: null })
     },
     (err) => {
       console.warn('[appointments] listener error:', err)
-      cb({ rows: DUMMY, source: 'error', loading: false, error: err })
+      cb({ rows: [], source: 'error', loading: false, error: err })
     },
   )
 }
