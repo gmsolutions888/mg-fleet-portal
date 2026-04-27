@@ -162,8 +162,8 @@ export default function VehicleCatalogIngest() {
   const modelsAnalysis = useMemo(() => analyzeModels(modelsRaw, existingModels, brandsRaw, existingBrands), [modelsRaw, existingModels, brandsRaw, existingBrands])
 
   const canIngest = !ingesting && (
-    (brandsRaw && brandsAnalysis.cleanCount > 0) ||
-    (modelsRaw && modelsAnalysis.cleanCount > 0)
+    (brandsRaw && (brandsAnalysis?.cleanCount || 0) > 0) ||
+    (modelsRaw && (modelsAnalysis?.cleanCount || 0) > 0)
   )
 
   const ingest = async () => {
@@ -325,7 +325,7 @@ export default function VehicleCatalogIngest() {
         {(brandsRaw || modelsRaw) && (
           <div className="bg-white rounded-2xl border p-4 flex items-center justify-between gap-3">
             <div className="text-xs sm:text-sm text-gray-700">
-              Will write up to {(brandsAnalysis.cleanCount || 0)} make change{brandsAnalysis.cleanCount === 1 ? '' : 's'} and {(modelsAnalysis.cleanCount || 0)} model change{modelsAnalysis.cleanCount === 1 ? '' : 's'}.
+              Will write up to {(brandsAnalysis?.cleanCount || 0)} make change{brandsAnalysis?.cleanCount === 1 ? '' : 's'} and {(modelsAnalysis?.cleanCount || 0)} model change{modelsAnalysis?.cleanCount === 1 ? '' : 's'}.
               Existing rows with no field differences are no-ops.
             </div>
             <button
