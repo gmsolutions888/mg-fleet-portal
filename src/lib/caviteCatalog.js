@@ -272,7 +272,9 @@ async function batchUpsert(coll, rows, key, fk, denorm) {
   const uid = auth?.currentUser?.uid || null
   let created = 0, updated = 0, skipped = 0
   // Pre-fetch existing once.
-  const existingSnap = await getDocs(query(collection(db, coll), limit(20000)))
+  // Firestore caps limit() at 10000. Largest table (PARTS_MG) has
+  // ~8k rows so this is enough for first ingest + re-ingest.
+  const existingSnap = await getDocs(query(collection(db, coll), limit(10000)))
   const existing = new Map(existingSnap.docs.map((d) => [d.id, d.data()]))
 
   const chunkSize = 400

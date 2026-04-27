@@ -398,7 +398,7 @@ async function fetchExisting(kind) {
   const collName = kind === 'services' ? 'caviteServices'
                 : kind === 'parts'    ? 'caviteParts'
                 :                       'caviteConsumables'
-  const snap = await getDocs(query(collection(db, collName), limit(20000)))
+  const snap = await getDocs(query(collection(db, collName), limit(10000)))
   const idKey = kind === 'services' ? 'serviceId'
               : kind === 'parts'    ? 'partsId'
               :                       'consumableId'
