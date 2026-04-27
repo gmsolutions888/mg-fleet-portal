@@ -6,12 +6,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { formatMoney, formatDate } from '../lib/dummyData'
+import { formatMoney, formatDate, formatDateTime } from '../lib/dummyData'
 import {
   BRANCH_INVOICE_STATUS, voidBranchInvoice, watchBranchInvoiceByCode,
+  agingFor, balanceDue as balanceDueOf, effectiveBranchStatus,
+  paymentsTotal as paymentsTotalOf, recordBranchPayment,
 } from '../lib/branchInvoices'
 import {
   generateClientInvoice, findClientInvoiceForBranchInvoice,
+  PAYMENT_METHODS,
 } from '../lib/clientInvoices'
 import { getFleetCompanyByName } from '../lib/fleetCompanies'
 import Icon from '../components/ui/Icon'
@@ -26,6 +29,13 @@ export default function BranchInvoiceDetails() {
   const [loading, setLoading] = useState(true)
   const [source, setSource] = useState('loading')
   const [voidModalOpen, setVoidModalOpen] = useState(false)
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [now, setNow] = useState(new Date())
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     const unsub = watchBranchInvoiceByCode(code, ({ invoice, source }) => {
@@ -48,8 +58,18 @@ export default function BranchInvoiceDetails() {
     </div>
   )
 
+  const eff = effectiveBranchStatus(invoice, now)
+  const aging = agingFor(invoice, now)
+  const balance = balanceDueOf(invoice)
+  const paid = paymentsTotalOf(invoice)
   const canVoid = (
     invoice.status === BRANCH_INVOICE_STATUS.OPEN &&
+    paid === 0 &&
+    (profile?.is_admin || profile?.role === 'finance' || profile?.role === 'branch_manager')
+  )
+  const canPay = (
+    invoice.status === BRANCH_INVOICE_STATUS.OPEN &&
+    balance > 0 &&
     (profile?.is_admin || profile?.role === 'finance' || profile?.role === 'branch_manager')
   )
 
@@ -59,12 +79,12 @@ export default function BranchInvoiceDetails() {
         eyebrow="BRANCH INVOICE"
         title={invoice.code}
         subtitle={`${invoice.plateNo || ''} · ${invoice.company || 'WALK-IN'}`}
-        right={<TotalChip value={invoice.total} />}
+        right={<TotalChip total={invoice.total} balance={balance} status={invoice.status} />}
       />
 
       <div className="px-3 sm:px-6 pt-4 space-y-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <StatusPill status={invoice.status} />
+          <StatusPill status={eff} />
           {invoice.branch && (
             <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">
               {invoice.branch}
@@ -74,6 +94,12 @@ export default function BranchInvoiceDetails() {
             <span className="text-[11px] text-gray-500">
               Issued {formatDate(invoice.issuedAtIso)}
               {invoice.issuedByName && ` by ${invoice.issuedByName}`}
+            </span>
+          )}
+          {invoice.dueAtIso && (
+            <span className={`text-[11px] font-bold ${eff === 'OVERDUE' ? 'text-red-700' : 'text-gray-600'}`}>
+              Due {formatDate(invoice.dueAtIso)}
+              {eff === 'OVERDUE' && ` · ${aging.daysPastDue}d overdue`}
             </span>
           )}
         </div>
@@ -96,7 +122,9 @@ export default function BranchInvoiceDetails() {
 
         <ItemsCard invoice={invoice} />
 
-        <TotalsCard invoice={invoice} />
+        <PaymentsCard invoice={invoice} />
+
+        <TotalsCard invoice={invoice} balance={balance} paid={paid} />
       </div>
 
       {/* Sticky action bar */}
@@ -104,7 +132,7 @@ export default function BranchInvoiceDetails() {
         className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0)' }}
       >
-        <div className="px-3 sm:px-6 py-3 grid grid-cols-2 gap-2">
+        <div className="px-3 sm:px-6 py-3 grid grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => window.print()}
@@ -115,14 +143,27 @@ export default function BranchInvoiceDetails() {
           </button>
           <button
             type="button"
+            onClick={() => canPay && setPayModalOpen(true)}
+            disabled={!canPay}
+            className="bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm px-4 py-3 rounded-xl active:scale-95 transition-transform"
+            title={canPay ? 'Record a payment' : 'Only finance, branch manager, or admin can record payments'}
+          >
+            {invoice.status === BRANCH_INVOICE_STATUS.PAID ? 'Paid in full' : 'Record payment'}
+          </button>
+          <button
+            type="button"
             onClick={() => canVoid && setVoidModalOpen(true)}
             disabled={!canVoid}
             className="bg-red-500 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm px-4 py-3 rounded-xl active:scale-95 transition-transform"
-            title={canVoid ? 'Void this invoice' : 'Only finance, branch manager, or admin can void'}
+            title={
+              paid > 0
+                ? 'Cannot void — payments recorded. Use a credit note (Round 15).'
+                : (canVoid ? 'Void this invoice' : 'Only finance, branch manager, or admin can void')
+            }
           >
             {invoice.status !== BRANCH_INVOICE_STATUS.OPEN
               ? `Invoice ${invoice.status.toLowerCase()}`
-              : 'Void invoice'}
+              : 'Void'}
           </button>
         </div>
       </div>
@@ -133,6 +174,15 @@ export default function BranchInvoiceDetails() {
           profile={profile}
           onClose={() => setVoidModalOpen(false)}
           onVoided={() => setVoidModalOpen(false)}
+        />
+      )}
+      {payModalOpen && (
+        <PaymentModal
+          invoice={invoice}
+          balance={balance}
+          profile={profile}
+          onClose={() => setPayModalOpen(false)}
+          onRecorded={() => setPayModalOpen(false)}
         />
       )}
     </div>
@@ -392,7 +442,38 @@ function ItemsCard({ invoice }) {
   )
 }
 
-function TotalsCard({ invoice }) {
+function PaymentsCard({ invoice }) {
+  const payments = Array.isArray(invoice.payments) ? invoice.payments : []
+  return (
+    <div className="bg-white rounded-2xl border overflow-hidden">
+      <div className="bg-gray-50 border-b px-4 py-2.5 text-[11px] uppercase tracking-widest font-bold text-gray-500">
+        Payments from MG Fleet
+      </div>
+      {payments.length === 0 ? (
+        <div className="p-4 text-sm text-gray-400 italic">No payments recorded yet.</div>
+      ) : (
+        <ul className="divide-y">
+          {payments.map((p, i) => (
+            <li key={i} className="p-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-gray-900">{p.method}</div>
+                {p.reference && <div className="text-[11px] text-gray-500 font-mono">Ref: {p.reference}</div>}
+                {p.note && <div className="text-[11px] text-gray-500 italic mt-0.5">{p.note}</div>}
+                <div className="text-[10px] text-gray-400 mt-1">
+                  {p.paidAt ? formatDateTime(p.paidAt) : '—'}
+                  {p.recordedByName && ` · ${p.recordedByName}`}
+                </div>
+              </div>
+              <div className="text-base font-black text-green-700 shrink-0">{formatMoney(p.amount)}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function TotalsCard({ invoice, balance, paid }) {
   return (
     <div className="bg-white rounded-2xl border overflow-hidden">
       <div className="bg-gray-50 border-b px-4 py-2.5 text-[11px] uppercase tracking-widest font-bold text-gray-500">
@@ -408,19 +489,34 @@ function TotalsCard({ invoice }) {
           <span className="font-bold text-gray-900">{formatMoney(invoice.materialsTotal)}</span>
         </div>
         <div className="border-t pt-3 mt-2 flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-widest text-gray-600">Amount Payable</span>
-          <span className="text-2xl font-black text-green-700">{formatMoney(invoice.total)}</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-gray-600">Total</span>
+          <span className="text-xl font-black text-gray-900">{formatMoney(invoice.total)}</span>
+        </div>
+        {paid > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-gray-500">Paid</span>
+            <span className="font-bold text-green-700">−{formatMoney(paid)}</span>
+          </div>
+        )}
+        <div className="border-t pt-3 mt-2 flex items-center justify-between">
+          <span className="text-xs font-bold uppercase tracking-widest text-gray-600">Balance Due</span>
+          <span className={`text-2xl font-black ${balance > 0 ? 'text-red-700' : 'text-green-700'}`}>
+            {formatMoney(balance)}
+          </span>
         </div>
       </div>
     </div>
   )
 }
 
-function TotalChip({ value }) {
+function TotalChip({ total, balance, status }) {
+  const showBalance = status === BRANCH_INVOICE_STATUS.OPEN && balance !== total
   return (
-    <div className="bg-white/15 rounded-xl px-3 py-2 text-right min-w-[110px]">
-      <div className="text-[9px] font-bold tracking-widest text-white/60">TOTAL</div>
-      <div className="text-xl font-black text-white leading-none mt-0.5">{formatMoney(value)}</div>
+    <div className="bg-white/15 rounded-xl px-3 py-2 text-right min-w-[120px]">
+      <div className="text-[9px] font-bold tracking-widest text-white/60">
+        {showBalance ? 'BALANCE' : 'TOTAL'}
+      </div>
+      <div className="text-xl font-black text-white leading-none mt-0.5">{formatMoney(showBalance ? balance : total)}</div>
     </div>
   )
 }
@@ -487,6 +583,128 @@ function VoidModal({ invoice, profile, onClose, onVoided }) {
             className="bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-sm font-bold px-4 py-2 rounded-full shadow"
           >
             {saving ? 'Voiding…' : 'Confirm void'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PaymentModal({ invoice, balance, profile, onClose, onRecorded }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const [amount, setAmount] = useState(String(balance.toFixed(2)))
+  const [method, setMethod] = useState('Bank Transfer')
+  const [reference, setReference] = useState('')
+  const [paidDate, setPaidDate] = useState(today)
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const submit = async () => {
+    if (saving) return
+    const amt = Number(amount)
+    if (!Number.isFinite(amt) || amt <= 0) { setError('Enter a positive amount.'); return }
+    if (amt > balance + 0.01) { setError(`Exceeds outstanding balance (${formatMoney(balance)}).`); return }
+    setSaving(true); setError(null)
+    try {
+      await recordBranchPayment(invoice.id, {
+        amount: amt,
+        method,
+        reference,
+        paidAtIso: new Date(`${paidDate}T00:00:00`).toISOString(),
+        note,
+        byProfile: profile,
+      })
+      onRecorded?.()
+    } catch (err) {
+      console.error('[branchInvoice] payment failed:', err)
+      setError(err.message || String(err))
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white w-full sm:w-[520px] sm:max-w-full rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <div className="font-bold text-gray-900">Record payment from MG Fleet</div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-2xl leading-none w-8 h-8 flex items-center justify-center" aria-label="Close">×</button>
+        </div>
+        <div className="p-4 space-y-3 overflow-y-auto">
+          <div className="bg-blue-50 border border-blue-200 text-blue-900 text-xs rounded-lg px-3 py-2">
+            Outstanding on <span className="font-mono font-bold">{invoice.code}</span>: <strong>{formatMoney(balance)}</strong>.
+            Partial payments are fine — invoice flips to PAID when balance hits zero.
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Amount *</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="input"
+                disabled={saving}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Method *</label>
+              <select value={method} onChange={(e) => setMethod(e.target.value)} className="input" disabled={saving}>
+                {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Reference no.</label>
+              <input
+                type="text"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                className="input"
+                placeholder="OR / cheque / txn ref"
+                disabled={saving}
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Date received</label>
+              <input
+                type="date"
+                value={paidDate}
+                onChange={(e) => setPaidDate(e.target.value)}
+                className="input"
+                disabled={saving}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">Note</label>
+            <textarea
+              rows={2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="input"
+              placeholder="Optional"
+              disabled={saving}
+            />
+          </div>
+
+          {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">Failed: {error}</div>}
+        </div>
+        <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={saving} className="text-sm font-bold text-gray-600 hover:text-gray-900 disabled:opacity-50 px-3 py-2">Cancel</button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={saving || !amount}
+            className="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white text-sm font-bold px-4 py-2 rounded-full shadow"
+          >
+            {saving ? 'Recording…' : 'Record payment'}
           </button>
         </div>
       </div>

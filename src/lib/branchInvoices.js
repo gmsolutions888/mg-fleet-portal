@@ -12,12 +12,24 @@
 // gapless numbering scoped to the issuing branch.
 
 import {
-  addDoc, collection, doc, getDoc, getDocs, onSnapshot, orderBy, query,
-  runTransaction, serverTimestamp, updateDoc, where,
+  addDoc, arrayUnion, collection, doc, getDoc, getDocs, onSnapshot, orderBy,
+  query, runTransaction, serverTimestamp, updateDoc, where,
 } from 'firebase/firestore'
 import { auth, db } from './firebase'
 import { emitNotification } from './notifications'
 import { effectiveQuotationStatus, QUOT_STATUS } from './serviceReceipts'
+// Aging / due-date helpers are shared with clientInvoices — same logic, same
+// shape, just a different collection of OPEN invoices to walk.
+import {
+  agingFor as clientAgingFor,
+  computeDueDateIso,
+  effectiveStatus as clientEffectiveStatus,
+  isOverdue as clientIsOverdue,
+} from './clientInvoices'
+
+// Branch ↔ MG Fleet settles on NET_30 by convention; not configurable per
+// branch for now (the legacy contract is uniform across branches).
+const BRANCH_PAYMENT_TERMS = 'NET_30'
 
 const COLLECTION = 'branchInvoices'
 const COUNTERS_COLLECTION = 'counters'
@@ -263,6 +275,15 @@ export async function generateBranchInvoice(quotationId, { byProfile, plateAsses
     materialsTotal,
     total,
 
+    // Payment terms snapshot. Branch ↔ MG Fleet is uniformly NET_30.
+    paymentTerms: BRANCH_PAYMENT_TERMS,
+    dueAtIso: computeDueDateIso(nowIso, BRANCH_PAYMENT_TERMS),
+
+    // Payment ledger.
+    payments: [],
+    paymentsTotal: 0,
+    balanceDue: total,
+
     issuedAt: serverTimestamp(),
     issuedAtIso: nowIso,
     issuedBy: uid,
@@ -313,6 +334,9 @@ export async function voidBranchInvoice(id, { reason, byProfile }) {
   if (inv.status !== BRANCH_INVOICE_STATUS.OPEN) {
     throw new Error('Only OPEN invoices can be voided.')
   }
+  if (paymentsTotal(inv) > 0) {
+    throw new Error('This invoice has recorded payments. Issue a credit note instead (Round 15).')
+  }
 
   const uid = auth?.currentUser?.uid || null
   const byName = profileDisplayName(byProfile)
@@ -339,6 +363,103 @@ export async function voidBranchInvoice(id, { reason, byProfile }) {
   })
 
   return { id, at: nowIso }
+}
+
+// ── Payment recording ─────────────────────────────────────────────────────
+
+export function paymentsTotal(invoice) {
+  const arr = Array.isArray(invoice?.payments) ? invoice.payments : []
+  return arr.reduce((s, p) => s + (Number(p?.amount) || 0), 0)
+}
+
+export function balanceDue(invoice) {
+  return Math.max(0, (Number(invoice?.total) || 0) - paymentsTotal(invoice))
+}
+
+// Aging proxies — exact same logic as client invoices, just with the branch
+// invoice doc as input. Branch invoices created before 14 ship don't carry
+// a dueAtIso; the helpers safely return CURRENT in that case.
+export function agingFor(invoice, now) { return clientAgingFor(invoice, now) }
+export function isOverdue(invoice, now) { return clientIsOverdue(invoice, now) }
+export function effectiveBranchStatus(invoice, now) { return clientEffectiveStatus(invoice, now) }
+
+// Append a payment to a branch invoice. Mirrors recordPayment in
+// clientInvoices: transactional so two simultaneous writes don't race past
+// the total or both flip status. Auto-flips to PAID when balance hits zero.
+export async function recordBranchPayment(id, { amount, method, reference, paidAtIso, note, byProfile } = {}) {
+  if (!db) throw new Error('Firestore not configured.')
+  if (!id) throw new Error('Missing invoice id.')
+  const amt = Number(amount)
+  if (!Number.isFinite(amt) || amt <= 0) throw new Error('Payment amount must be a positive number.')
+  const m = (method || '').trim()
+  if (!m) throw new Error('Payment method is required.')
+
+  const uid = auth?.currentUser?.uid || null
+  const byName = profileDisplayName(byProfile)
+  const nowIso = new Date().toISOString()
+  const paidIso = paidAtIso || nowIso
+
+  const ref = doc(db, COLLECTION, id)
+  const result = await runTransaction(db, async (txn) => {
+    const snap = await txn.get(ref)
+    if (!snap.exists()) throw new Error('Invoice not found.')
+    const inv = snap.data()
+    if (inv.status === BRANCH_INVOICE_STATUS.VOID) {
+      throw new Error('Cannot record payment on a voided invoice.')
+    }
+    const prevTotal = (inv.payments || []).reduce((s, p) => s + (Number(p?.amount) || 0), 0)
+    const newPaymentsTotal = prevTotal + amt
+    const total = Number(inv.total) || 0
+    if (newPaymentsTotal > total + 0.01) {
+      throw new Error(`Payment exceeds outstanding balance (₱${(total - prevTotal).toFixed(2)} remaining).`)
+    }
+    const newBalance = Math.max(0, total - newPaymentsTotal)
+    const flipsToPaid = newBalance <= 0.01
+
+    const payment = {
+      amount: amt,
+      method: m,
+      reference: (reference || '').trim() || null,
+      paidAt: paidIso,
+      note: (note || '').trim() || null,
+      recordedBy: uid,
+      recordedByName: byName,
+      recordedAt: nowIso,
+    }
+
+    txn.update(ref, {
+      payments: arrayUnion(payment),
+      paymentsTotal: newPaymentsTotal,
+      balanceDue: newBalance,
+      ...(flipsToPaid ? {
+        status: BRANCH_INVOICE_STATUS.PAID,
+        paidAt: nowIso,
+        paidBy: uid,
+        paidByName: byName,
+      } : {}),
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+    })
+
+    return { flipsToPaid, newBalance, newPaymentsTotal, invoiceCode: inv.code, plateNo: inv.plateNo, branch: inv.branch }
+  })
+
+  emitNotification({
+    kind: 'service',
+    title: result.flipsToPaid
+      ? `Branch invoice ${result.invoiceCode} fully paid`
+      : `Payment recorded — ${result.invoiceCode}`,
+    body: result.flipsToPaid
+      ? `${result.plateNo || ''} · ${result.branch || ''}`.trim()
+      : `${formatMoneyShort(amt)} · balance ${formatMoneyShort(result.newBalance)}`,
+    plateNo: result.plateNo || null,
+    receiptId: id,
+    link: `/branch-invoices/${result.invoiceCode}`,
+    branch: result.branch || null,
+    company: null, // branch hop is internal — client doesn't see it
+  })
+
+  return { id, ...result, paidAt: paidIso }
 }
 
 function formatMoneyShort(n) {
