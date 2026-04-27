@@ -198,8 +198,14 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
         {/* Mobile: card list */}
         <div className="lg:hidden space-y-3">
           {filtered.length === 0 && (
-            <div className="bg-white rounded-2xl border border-dashed p-6 text-center text-gray-400 text-sm">
-              No quotations match.
+            <div className="bg-white rounded-2xl border border-dashed p-6 text-center text-sm">
+              <div className="text-gray-400">No quotations match.</div>
+              {!customerView && rows.length === 0 && (
+                <div className="text-xs text-gray-500 mt-3">
+                  Quotations are created from assessments.{' '}
+                  <Link to="/appointments" className="text-brand font-bold hover:underline">Open Service Bookings →</Link>
+                </div>
+              )}
             </div>
           )}
           {filtered.map((q) => (
@@ -275,9 +281,13 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
 
       {!customerView && (
         <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-20">
-          <Link to="/quotations/create" className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl">
+          <Link
+            to="/appointments"
+            className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl"
+            title="Quotations start from a booking → assessment. This takes you to the Bookings list."
+          >
             <Icon name="plus" className="w-4 h-4" />
-            New Quotation
+            New from Booking
           </Link>
         </div>
       )}

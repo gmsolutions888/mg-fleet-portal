@@ -5,7 +5,7 @@
 // sticky footer above the submit bar. Desktop keeps the table.
 
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
@@ -207,6 +207,30 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
 
       <div className="px-3 sm:px-6 pt-4 space-y-4">
         {error && <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl px-3 py-2 text-sm">Save failed: {error}</div>}
+
+        {/* Round 29 — banner shown when the user lands on quote create
+            without ?fromAssessment=. The proper flow is booking →
+            assess → "Create Quotation" CTA. This direct path skips
+            assessment, so the prefill won't run and the audit trail
+            won't link a quote to a roadworthy check. Kept as a backdoor
+            for legacy / edge cases. */}
+        {isQuotation && !fromAssessment && (
+          <div className="rounded-xl px-3 py-2.5 text-sm border bg-amber-50 border-amber-200 text-amber-900">
+            <div className="flex items-start gap-2">
+              <span className="text-lg leading-none">⚠️</span>
+              <div className="flex-1 text-xs sm:text-sm">
+                <div className="font-bold mb-0.5">Creating a quotation without an assessment</div>
+                <div>
+                  The standard process is <strong>Booking → Assess → Create Quotation</strong>. Starting here skips the assessment + smart prefill,
+                  and the quote won't link to a roadworthy check.
+                  Use this only for legacy / out-of-system jobs. Otherwise{' '}
+                  <Link to="/appointments" className="underline font-bold">go back to Service Bookings</Link>{' '}
+                  and start from there.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {prefillBanner && (
           <div className={`rounded-xl px-3 py-2.5 text-sm border ${
