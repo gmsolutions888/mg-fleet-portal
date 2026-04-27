@@ -279,6 +279,43 @@ export default function AssessmentForm() {
 
   const canSubmit = answered > 0 && header.plate && header.technician && !saving
 
+  // Round 24 — when Submit is clicked but the form's incomplete, find
+  // the first blocker, scroll to it, focus the offending input, and
+  // surface a targeted message. Same pattern as QuickFix.
+  const findFirstBlocker = () => {
+    if (!header.plate || !String(header.plate).trim()) {
+      return { fieldId: 'assess-plate', message: 'Plate number is required.' }
+    }
+    if (!header.technician || !String(header.technician).trim()) {
+      return { fieldId: 'assess-technician', message: 'Technician name is required.' }
+    }
+    if (answered === 0) {
+      return {
+        fieldId: null,
+        anchorId: 'assess-categories',
+        message: 'Rate at least one item below before submitting.',
+        openCat: activeCategories[0]?.code || null,
+      }
+    }
+    return null
+  }
+
+  const jumpToBlocker = (blocker) => {
+    if (!blocker) return
+    setError(blocker.message)
+    if (blocker.openCat) setOpenCat(blocker.openCat)
+    const anchor = blocker.fieldId || blocker.anchorId
+    if (!anchor) return
+    const el = document.getElementById(anchor)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (blocker.fieldId) {
+      setTimeout(() => {
+        const input = document.getElementById(blocker.fieldId)
+        if (input) input.focus()
+      }, 250)
+    }
+  }
+
   // Serialize the labor picker state for persistence. Order follows
   // LABOR_TYPES so the saved doc reads top-to-bottom in catalog order.
   const buildLaborsPayload = () => {
@@ -290,7 +327,11 @@ export default function AssessmentForm() {
   }
 
   const onSubmit = async () => {
-    if (!canSubmit) return
+    if (saving) return
+    if (!canSubmit) {
+      jumpToBlocker(findFirstBlocker())
+      return
+    }
     setSaving(true); setError(null)
     try {
       const { labors: laborsPayload, otherLabor: otherLaborPayload } = buildLaborsPayload()
@@ -470,7 +511,7 @@ export default function AssessmentForm() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <Field label="Plate">
-            <input value={header.plate} onChange={(e) => setHeader((h) => ({ ...h, plate: e.target.value.toUpperCase() }))} className="input w-full uppercase" />
+            <input id="assess-plate" value={header.plate} onChange={(e) => setHeader((h) => ({ ...h, plate: e.target.value.toUpperCase() }))} className="input w-full uppercase scroll-mt-4" />
           </Field>
           <Field label="Date">
             <input type="date" value={header.date} onChange={(e) => setHeader((h) => ({ ...h, date: e.target.value }))} className="input w-full" />
@@ -481,7 +522,7 @@ export default function AssessmentForm() {
           <Field label="Odometer (km)"><input type="number" value={header.odometer} onChange={(e) => setHeader((h) => ({ ...h, odometer: e.target.value }))} className="input w-full" /></Field>
           <Field label="Client / Fleet"><input value={header.client} onChange={(e) => setHeader((h) => ({ ...h, client: e.target.value }))} className="input w-full" /></Field>
           <Field label="Branch"><input value={header.branch} onChange={(e) => setHeader((h) => ({ ...h, branch: e.target.value }))} className="input w-full" /></Field>
-          <Field label="Technician"><input value={header.technician} onChange={(e) => setHeader((h) => ({ ...h, technician: e.target.value }))} className="input w-full" /></Field>
+          <Field label="Technician"><input id="assess-technician" value={header.technician} onChange={(e) => setHeader((h) => ({ ...h, technician: e.target.value }))} className="input w-full scroll-mt-4" /></Field>
           <Field label="Type">
             <select value={header.type} onChange={(e) => { setHeader((h) => ({ ...h, type: e.target.value })); prefilledKeyRef.current = '' }} className="input w-full">
               {ASSESS_TYPES.map((t) => <option key={t}>{t}</option>)}
@@ -502,6 +543,7 @@ export default function AssessmentForm() {
       />
 
       {/* ── Inspection categories ───────────────────────────────── */}
+      <div id="assess-categories" className="scroll-mt-4" />
       {activeCategories.length === 0 ? (
         <div className="mx-3 sm:mx-4 bg-white border border-dashed rounded-xl p-6 text-center text-gray-400 text-sm">
           {header.type === 'Re-Assessment' && !prevAssessment
@@ -537,10 +579,10 @@ export default function AssessmentForm() {
         className="fixed bottom-0 left-0 right-0 bg-white border-t px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-3 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
         style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0))' }}
       >
-        {error && <div className="text-[11px] text-red-700 flex-1 truncate">Save failed: {error}</div>}
+        {error && <div className="text-[11px] text-red-700 flex-1 truncate" title={error}>{error}</div>}
         <div className={`text-[11px] sm:text-xs flex-1 min-w-0 ${error ? 'hidden' : ''}`}>
           {answered === 0 ? (
-            <span className="text-gray-500">Rate at least one item to submit.</span>
+            <span className="text-gray-500">Tap Submit — we'll jump you to anything missing.</span>
           ) : (
             <span className="text-gray-700">
               <span className="font-bold">{answered}/{totalItems}</span>
@@ -552,8 +594,11 @@ export default function AssessmentForm() {
         </div>
         <button
           onClick={onSubmit}
-          disabled={!canSubmit}
-          className="bg-brand hover:bg-brand-dark disabled:opacity-50 text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow active:scale-95 transition-transform shrink-0"
+          disabled={saving}
+          className={`text-white font-bold text-sm px-5 py-2.5 rounded-xl shadow active:scale-95 transition-transform shrink-0 ${
+            canSubmit ? 'bg-brand hover:bg-brand-dark' : 'bg-amber-600 hover:bg-amber-700'
+          } ${saving ? 'opacity-50' : ''}`}
+          title={canSubmit ? '' : 'Plate, technician, and at least one rated item are required — click to jump to whatever is missing.'}
         >
           {saving ? 'Submitting…' : 'Submit'}
         </button>

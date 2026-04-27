@@ -520,6 +520,36 @@ export async function hasApprovedQuotationForPlate(plateRaw) {
   }
 }
 
+// Returns the most recent APPROVED_FINAL quotation doc for a plate, or
+// null if none. Used by the post-assessment CTA to switch from "Create
+// Quotation" to "Proceed to Invoice" once an approved quote exists for
+// the plate (typically after a re-assessment closes the loop).
+export async function getApprovedQuotationForPlate(plateRaw) {
+  if (!db || !plateRaw) return null
+  const norm = String(plateRaw).toUpperCase().replace(/\s+/g, '')
+  try {
+    const snap = await getDocs(query(
+      collection(db, COLLECTION),
+      where('kind', '==', 'quotation'),
+      where('plateNo', '==', norm),
+    ))
+    const candidates = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((q) => effectiveQuotationStatus(q) === QUOT_STATUS.APPROVED_FINAL)
+    if (candidates.length === 0) return null
+    // Sort by createdAt / updatedAt desc, newest first.
+    candidates.sort((a, b) => {
+      const ax = Date.parse(a.updatedAt?.toDate?.()?.toISOString?.() || a.updatedAt || a.createdAt || 0) || 0
+      const bx = Date.parse(b.updatedAt?.toDate?.()?.toISOString?.() || b.updatedAt || b.createdAt || 0) || 0
+      return bx - ax
+    })
+    return candidates[0]
+  } catch (err) {
+    console.warn('[quotation] getApprovedQuotationForPlate failed:', err?.message || err)
+    return null
+  }
+}
+
 // Free-text comment, posted without changing status. Any party in the chain
 // can add one. Shows up in the same thread as action-notes.
 export async function addQuotationComment(id, { text, byProfile }) {
