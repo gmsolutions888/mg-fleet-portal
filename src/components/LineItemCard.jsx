@@ -11,18 +11,68 @@
 //     index pill (useful in the edit flow to show which round each
 //     existing item came from)
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PARTS_CATALOG } from '../lib/partsCatalog'
 import { formatMoney } from '../lib/dummyData'
+import { searchSuggestions } from '../lib/caviteCatalogSearch'
 import Icon from './ui/Icon'
 
-export default function LineItemCard({ index, row, onChange, onRemove, canRemove, showRevisionTag = false }) {
+// Round 35 — autocomplete now queries the Cavite catalog
+// (caviteServices / caviteParts / caviteConsumables) filtered by
+// vehicleMakeId + vehicleModelId. Falls back to the hand-curated
+// PARTS_CATALOG seed when neither vehicle ID nor a typed search
+// term yields catalog results.
+export default function LineItemCard({
+  index, row, onChange, onRemove, canRemove, showRevisionTag = false,
+  vehicleMakeId, vehicleModelId,
+}) {
   const [showAuto, setShowAuto] = useState(false)
+  const [suggestions, setSuggestions] = useState([])
   const subTotal = (Number(row.qty) || 1) * (Number(row.unitCost) || 0)
-  const filtered = row.description
-    ? PARTS_CATALOG.filter((p) => p.name.toLowerCase().includes(row.description.toLowerCase())).slice(0, 6)
-    : []
-  const pick = (p) => { onChange({ description: p.name, unitCost: p.srp || p.unitCost }); setShowAuto(false) }
+
+  // Debounced live search. Re-runs when type / vehicle / typed text
+  // changes. 200 ms debounce keeps Firestore reads down on fast typing.
+  useEffect(() => {
+    let cancelled = false
+    const handle = setTimeout(async () => {
+      try {
+        const live = await searchSuggestions({
+          type: row.type,
+          makeId: vehicleMakeId,
+          modelId: vehicleModelId,
+          term: row.description || '',
+        })
+        if (cancelled) return
+        // If the live catalog returned nothing AND the user has typed
+        // something, fall back to the seed list so the UX never feels
+        // dead. (Useful for legacy quotes whose make/model didn't
+        // resolve to caviteIds.)
+        if (live.length === 0 && row.description) {
+          const term = row.description.toLowerCase()
+          const fallback = PARTS_CATALOG
+            .filter((p) => p.name.toLowerCase().includes(term))
+            .slice(0, 6)
+            .map((p) => ({
+              code: p.code, name: p.name, unitCost: p.srp || p.unitCost,
+              srp: p.srp || p.unitCost, source: 'seed', supplier: p.supplier || null,
+              makeName: null, modelName: null,
+            }))
+          setSuggestions(fallback)
+        } else {
+          setSuggestions(live)
+        }
+      } catch (err) {
+        console.warn('[LineItemCard] search failed:', err)
+        if (!cancelled) setSuggestions([])
+      }
+    }, 200)
+    return () => { cancelled = true; clearTimeout(handle) }
+  }, [row.type, row.description, vehicleMakeId, vehicleModelId])
+
+  const pick = (p) => {
+    onChange({ description: p.name, unitCost: p.unitCost || p.srp })
+    setShowAuto(false)
+  }
 
   const isLabor = row.type === 'Labor'
   return (
@@ -82,16 +132,23 @@ export default function LineItemCard({ index, row, onChange, onRemove, canRemove
             onBlur={() => setTimeout(() => setShowAuto(false), 150)}
             placeholder="Search catalog or enter custom…"
           />
-          {showAuto && filtered.length > 0 && (
+          {showAuto && suggestions.length > 0 && (
             <div className="absolute top-full left-0 right-0 z-20 mt-1 bg-white border rounded-xl shadow-xl text-xs max-h-64 overflow-y-auto">
-              {filtered.map((p) => (
-                <button type="button" key={p.code} onClick={() => pick(p)} className="block w-full text-left px-3 py-2 hover:bg-sky-50 border-b last:border-b-0">
-                  <div className="font-semibold text-gray-800">{p.name} <span className="font-mono text-gray-400">({p.code})</span></div>
-                  {p.compat && <div className="text-[11px] text-gray-500">{p.compat}</div>}
+              {suggestions.map((p, i) => (
+                <button type="button" key={`${p.source}-${p.code}-${i}`} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="block w-full text-left px-3 py-2 hover:bg-sky-50 border-b last:border-b-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-800">{p.name}</span>
+                    <span className="font-mono text-[10px] text-gray-400">({p.code})</span>
+                    <SourceTag source={p.source} />
+                  </div>
+                  {(p.makeName || p.modelName) && (
+                    <div className="text-[11px] text-gray-500">
+                      {[p.makeName, p.modelName].filter(Boolean).join(' → ')}
+                    </div>
+                  )}
                   <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
                     <span className="font-bold text-green-700">{formatMoney(p.srp || p.unitCost)}</span>
                     {p.supplier && <span>· {p.supplier}</span>}
-                    {p.stock != null && <span>· stock {p.stock}</span>}
                   </div>
                 </button>
               ))}
@@ -144,5 +201,23 @@ export default function LineItemCard({ index, row, onChange, onRemove, canRemove
         </div>
       </div>
     </div>
+  )
+}
+
+// Visual label distinguishing a Service / Part / Consumable / Seed
+// suggestion in the autocomplete dropdown. Keeps the UI honest about
+// which catalog produced each row.
+function SourceTag({ source }) {
+  const config = {
+    service:    { label: 'Service',    cls: 'bg-sky-100 text-sky-800' },
+    part:       { label: 'Part',       cls: 'bg-amber-100 text-amber-800' },
+    consumable: { label: 'Universal',  cls: 'bg-emerald-100 text-emerald-800' },
+    seed:       { label: 'Seed',       cls: 'bg-gray-100 text-gray-600' },
+  }
+  const c = config[source] || config.seed
+  return (
+    <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${c.cls}`}>
+      {c.label}
+    </span>
   )
 }

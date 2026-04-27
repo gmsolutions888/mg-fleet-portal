@@ -26,6 +26,7 @@ import PageHero from '../components/ui/PageHero'
 import StatusPill from '../components/ui/StatusPill'
 import LineItemCard from '../components/LineItemCard'
 import LineItemRow, { LineItemHeader } from '../components/LineItemRow'
+import { resolveVehicleIds } from '../lib/caviteCatalogSearch'
 
 export default function ServiceReceiptDetails() {
   const { code } = useParams()
@@ -610,6 +611,15 @@ function RevisionEditor({ quot, profile, onCancel, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
 
+  const [vehicleIds, setVehicleIds] = useState({ makeId: null, modelId: null })
+  useEffect(() => {
+    let cancelled = false
+    resolveVehicleIds(quot.make || quot.brand, quot.model).then((ids) => {
+      if (!cancelled) setVehicleIds(ids)
+    })
+    return () => { cancelled = true }
+  }, [quot.make, quot.brand, quot.model])
+
   const deltaTotal = items.reduce((s, i) => s + ((Number(i.qty) || 0) * (Number(i.unitCost) || 0)), 0)
   const nextRound = currentRevisionRound(quot) + 1
 
@@ -653,6 +663,8 @@ function RevisionEditor({ quot, profile, onCancel, onSaved }) {
               onChange={(patch) => update(i, patch)}
               onRemove={() => remove(i)}
               canRemove={items.length > 1}
+              vehicleMakeId={vehicleIds.makeId}
+              vehicleModelId={vehicleIds.modelId}
             />
           ))}
         </div>
@@ -670,6 +682,8 @@ function RevisionEditor({ quot, profile, onCancel, onSaved }) {
                     onChange={(patch) => update(i, patch)}
                     onRemove={() => remove(i)}
                     canRemove={items.length > 1}
+                    vehicleMakeId={vehicleIds.makeId}
+                    vehicleModelId={vehicleIds.modelId}
                   />
                 ))}
               </tbody>
@@ -748,6 +762,17 @@ function EditableItems({ quot, profile, onCancel, onSaved }) {
   )
   const [notes, setNotes] = useState(quot.notes || '')
   const [saving, setSaving] = useState(false)
+
+  // Round 35 — resolve free-text make/model on the quote to caviteIds
+  // for the autocomplete vehicle filter.
+  const [vehicleIds, setVehicleIds] = useState({ makeId: null, modelId: null })
+  useEffect(() => {
+    let cancelled = false
+    resolveVehicleIds(quot.make || quot.brand, quot.model).then((ids) => {
+      if (!cancelled) setVehicleIds(ids)
+    })
+    return () => { cancelled = true }
+  }, [quot.make, quot.brand, quot.model])
   const [error, setError] = useState(null)
 
   const laborTotal = items.filter((i) => i.type === 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
@@ -790,6 +815,8 @@ function EditableItems({ quot, profile, onCancel, onSaved }) {
               onRemove={() => removeRow(i)}
               canRemove={items.length > 1}
               showRevisionTag
+              vehicleMakeId={vehicleIds.makeId}
+              vehicleModelId={vehicleIds.modelId}
             />
           ))}
         </div>
@@ -807,6 +834,8 @@ function EditableItems({ quot, profile, onCancel, onSaved }) {
                     onChange={(patch) => updateRow(i, patch)}
                     onRemove={() => removeRow(i)}
                     canRemove={items.length > 1}
+                    vehicleMakeId={vehicleIds.makeId}
+                    vehicleModelId={vehicleIds.modelId}
                   />
                 ))}
               </tbody>

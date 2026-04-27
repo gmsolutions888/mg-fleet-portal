@@ -11,21 +11,50 @@
 //                               the last row's button adds a new line.
 //   onAdd                     — handler for the "+" mode
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PARTS_CATALOG } from '../lib/partsCatalog'
 import { formatMoney } from '../lib/dummyData'
+import { searchSuggestions } from '../lib/caviteCatalogSearch'
 import Icon from './ui/Icon'
 
 export default function LineItemRow({
   row, onChange, onRemove, canRemove = true,
   showAddInRowAction = false, onAdd,
+  vehicleMakeId, vehicleModelId,
 }) {
   const [showAuto, setShowAuto] = useState(false)
+  const [suggestions, setSuggestions] = useState([])
   const subTotal = (Number(row.qty) || 1) * (Number(row.unitCost) || 0)
-  const filtered = row.description
-    ? PARTS_CATALOG.filter((p) => p.name.toLowerCase().includes(row.description.toLowerCase())).slice(0, 6)
-    : []
-  const pick = (p) => { onChange({ description: p.name, unitCost: p.srp || p.unitCost }); setShowAuto(false) }
+
+  useEffect(() => {
+    let cancelled = false
+    const handle = setTimeout(async () => {
+      try {
+        const live = await searchSuggestions({
+          type: row.type, makeId: vehicleMakeId, modelId: vehicleModelId, term: row.description || '',
+        })
+        if (cancelled) return
+        if (live.length === 0 && row.description) {
+          const term = row.description.toLowerCase()
+          setSuggestions(
+            PARTS_CATALOG.filter((p) => p.name.toLowerCase().includes(term)).slice(0, 6).map((p) => ({
+              code: p.code, name: p.name, unitCost: p.srp || p.unitCost,
+              srp: p.srp || p.unitCost, source: 'seed', supplier: p.supplier || null,
+              makeName: null, modelName: null,
+            })),
+          )
+        } else {
+          setSuggestions(live)
+        }
+      } catch (err) {
+        console.warn('[LineItemRow] search failed:', err)
+        if (!cancelled) setSuggestions([])
+      }
+    }, 200)
+    return () => { cancelled = true; clearTimeout(handle) }
+  }, [row.type, row.description, vehicleMakeId, vehicleModelId])
+
+  const pick = (p) => { onChange({ description: p.name, unitCost: p.unitCost || p.srp }); setShowAuto(false) }
 
   return (
     <tr>
@@ -52,17 +81,29 @@ export default function LineItemRow({
           onBlur={() => setTimeout(() => setShowAuto(false), 150)}
           placeholder="Search parts / service…"
         />
-        {showAuto && filtered.length > 0 && (
-          <div className="absolute top-full left-0 z-20 mt-1 w-[90vw] max-w-sm sm:w-80 bg-white border rounded-md shadow-xl text-xs">
-            {filtered.map((p) => (
-              <button type="button" key={p.code} onClick={() => pick(p)} className="block w-full text-left px-3 py-2 hover:bg-sky-50 border-b last:border-b-0">
-                <div className="font-semibold text-gray-800">{p.name} ({p.code})</div>
-                {p.compat && <div className="text-[11px] text-gray-500">Compatible to: {p.compat}</div>}
-                {p.supplier && (
-                  <div className="text-[11px] text-gray-500">
-                    Supplier: {p.supplier} · Stock: {p.stock} · Reserved: {p.reserved} · SRP: {formatMoney(p.srp)}
-                  </div>
+        {showAuto && suggestions.length > 0 && (
+          <div className="absolute top-full left-0 z-20 mt-1 w-[90vw] max-w-md sm:w-96 bg-white border rounded-md shadow-xl text-xs max-h-64 overflow-y-auto">
+            {suggestions.map((p, i) => (
+              <button type="button" key={`${p.source}-${p.code}-${i}`} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="block w-full text-left px-3 py-2 hover:bg-sky-50 border-b last:border-b-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-gray-800">{p.name}</span>
+                  <span className="font-mono text-[10px] text-gray-400">({p.code})</span>
+                  <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                    p.source === 'service'    ? 'bg-sky-100 text-sky-800'
+                    : p.source === 'part'     ? 'bg-amber-100 text-amber-800'
+                    : p.source === 'consumable' ? 'bg-emerald-100 text-emerald-800'
+                    :                            'bg-gray-100 text-gray-600'
+                  }`}>
+                    {p.source === 'consumable' ? 'Universal' : p.source}
+                  </span>
+                </div>
+                {(p.makeName || p.modelName) && (
+                  <div className="text-[11px] text-gray-500">{[p.makeName, p.modelName].filter(Boolean).join(' → ')}</div>
                 )}
+                <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
+                  <span className="font-bold text-green-700">{formatMoney(p.srp || p.unitCost)}</span>
+                  {p.supplier && <span>· {p.supplier}</span>}
+                </div>
               </button>
             ))}
           </div>

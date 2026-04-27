@@ -20,6 +20,7 @@ import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
 import LineItemCard from '../components/LineItemCard'
 import LineItemRow, { LineItemHeader } from '../components/LineItemRow'
+import { resolveVehicleIds } from '../lib/caviteCatalogSearch'
 
 // `kind` is "receipt" (default) or "quotation" — chosen by the route the user
 // arrived from. A quotation enters the Round 10 approval chain at DRAFT; a
@@ -52,6 +53,19 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
     () => vehicles.find((v) => v.plateNo === plate) || vehicles[0] || {},
     [plate, vehicles],
   )
+
+  // Round 35 — resolve the free-text make/model on this vehicle to
+  // caviteIds so the line-item autocomplete can filter by vehicle.
+  // Cached after first call; falls back to {null,null} on miss.
+  const [vehicleIds, setVehicleIds] = useState({ makeId: null, modelId: null })
+  useEffect(() => {
+    if (!vehicle?.brand && !vehicle?.brandModel) return
+    let cancelled = false
+    resolveVehicleIds(vehicle.brand, vehicle.model).then((ids) => {
+      if (!cancelled) setVehicleIds(ids)
+    })
+    return () => { cancelled = true }
+  }, [vehicle?.brand, vehicle?.model])
 
   const [odo, setOdo] = useState(vehicle.latestOdo || 0)
   // Round 25a — customer name is no longer auto-populated from the
@@ -279,6 +293,8 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
                 onChange={(patch) => updateRow(i, patch)}
                 onRemove={() => removeRow(i)}
                 canRemove={items.length > 1}
+                vehicleMakeId={vehicleIds.makeId}
+                vehicleModelId={vehicleIds.modelId}
               />
             ))}
             <button
@@ -306,6 +322,8 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
                       onRemove={() => removeRow(i)}
                       showAddInRowAction={i === items.length - 1}
                       canRemove={items.length > 1}
+                      vehicleMakeId={vehicleIds.makeId}
+                      vehicleModelId={vehicleIds.modelId}
                     />
                   ))}
                 </tbody>
