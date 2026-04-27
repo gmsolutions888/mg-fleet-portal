@@ -198,6 +198,7 @@ function QuotationDetail({ quot, profile }) {
             canIssueInvoice={canIssueInvoice}
             busy={busy}
             onIssue={issueInvoice}
+            plateNo={quot.plateNo}
           />
         )}
 
@@ -284,7 +285,7 @@ function QuotationDetail({ quot, profile }) {
 //   3) Gate fails → amber/red card with the reason (waiting reassessment,
 //      reassessment deferred, etc.)
 
-function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
+function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue, plateNo }) {
   if (gateState.loading) {
     return (
       <div className="bg-white rounded-2xl border px-4 py-3 text-sm text-gray-500">
@@ -371,8 +372,8 @@ function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
             {tone === 'red' ? 'Reassessment blocked invoicing' : 'Not ready to invoice yet'}
           </div>
           <div className={`text-xs mt-1 ${textBody}`}>{gate?.reason}</div>
-          {needsReassessment && quot.plateNo && (
-            <ReassessmentLauncher plateNo={quot.plateNo} />
+          {needsReassessment && plateNo && (
+            <ReassessmentLauncher plateNo={plateNo} />
           )}
           {gate?.reassessment?.rwaNumber && (
             <Link
