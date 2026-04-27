@@ -393,13 +393,15 @@ function formatCurrencyShort(n) {
 }
 
 // Can this profile add a mid-repair revision to an APPROVED_FINAL quotation?
-// Only supervisors / admins, and only from APPROVED_FINAL (by definition:
-// revisions happen during repair, which only starts once the quotation is
-// approved). DRAFT edits go through canEditQuotation / updateQuotationItems
-// instead — that's for pre-approval polish, not mid-repair scope creep.
+// Only supervisors / admins, only from APPROVED_FINAL, AND only before a
+// branch invoice has been issued. Round 39: once we've billed the branch
+// invoice off this quote, the quote is locked — you can't retroactively
+// add line items to a job that's already been invoiced. The path forward
+// is a credit note (Round 15) or a new quotation, not a back-edit.
 export function canAddRevision(quot, profile) {
   if (!quot || !profile) return false
   if (effectiveQuotationStatus(quot) !== QUOT_STATUS.APPROVED_FINAL) return false
+  if (quot.branchInvoiceCode || quot.branchInvoiceId || quot.branchInvoicedAt) return false
   if (profile.is_admin) return true
   const actor = actorRoleFor(profile)
   return actor === 'admin_supervisor'
@@ -436,6 +438,9 @@ export async function addQuotationRevision(id, { newItems, notes, byProfile }) {
   const quot = { id: snap.id, ...snap.data() }
   if (quot.kind !== 'quotation') throw new Error('Only quotations can be revised.')
   if (!canAddRevision(quot, byProfile)) {
+    if (quot.branchInvoiceCode || quot.branchInvoiceId) {
+      throw new Error(`Quotation is locked — branch invoice ${quot.branchInvoiceCode || ''} already issued. Use a credit note or a new quotation instead of revising.`)
+    }
     throw new Error('Revisions can only be added to approved quotations by a supervisor or admin.')
   }
 

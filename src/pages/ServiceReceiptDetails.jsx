@@ -226,6 +226,32 @@ function QuotationDetail({ quot, profile }) {
           </div>
         )}
 
+        {/* Round 39 — when the quote has been invoiced, surface a clear
+            locked state in place of the revision affordance. canAddRevision
+            already returns false in this case; this just explains why. */}
+        {status === QUOT_STATUS.APPROVED_FINAL
+          && (quot.branchInvoiceCode || quot.branchInvoiceId)
+          && !revisionMode && (
+          <div className="bg-gray-100 border-2 border-gray-300 rounded-2xl p-3 flex items-center gap-3">
+            <div className="text-2xl leading-none">🔒</div>
+            <div className="flex-1 text-xs text-gray-700">
+              <div className="font-bold text-gray-900">Quotation locked — invoice issued</div>
+              <div>
+                Branch invoice <span className="font-mono font-bold">{quot.branchInvoiceCode}</span> was generated from this quote, so the line items are now immutable.
+                For changes, use a <strong>credit note</strong> on the invoice or open a <strong>new quotation</strong>.
+              </div>
+            </div>
+            {quot.branchInvoiceCode && (
+              <Link
+                to={`/branch-invoices/${quot.branchInvoiceCode}`}
+                className="bg-gray-900 hover:bg-black text-white font-bold text-xs px-4 py-2 rounded-full shrink-0"
+              >
+                View invoice →
+              </Link>
+            )}
+          </div>
+        )}
+
         {editMode ? (
           <EditableItems
             quot={quot}
