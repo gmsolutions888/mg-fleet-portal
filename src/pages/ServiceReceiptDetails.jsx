@@ -20,6 +20,7 @@ import {
   canGenerateBranchInvoice, generateBranchInvoice, findInvoiceForQuotation,
 } from '../lib/branchInvoices'
 import { getAssessmentsForPlate } from '../lib/assessments'
+import { getMostRecentAppointmentByPlate } from '../lib/appointments'
 import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
 import StatusPill from '../components/ui/StatusPill'
@@ -354,6 +355,13 @@ function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
   const bg = tone === 'red' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'
   const textTitle = tone === 'red' ? 'text-red-800' : 'text-amber-800'
   const textBody = tone === 'red' ? 'text-red-700' : 'text-amber-700'
+
+  // Round 22 — when the gate fails because no post-repair re-assessment
+  // exists yet, give the user a one-click path to start one. Look up
+  // the most recent appointment for this plate and deep-link to its
+  // assessment form with type=Re-Assessment pre-selected.
+  const needsReassessment = /reassessment/i.test(gate?.reason || '')
+
   return (
     <div className={`${bg} border-2 rounded-2xl p-4`}>
       <div className="flex items-start gap-3">
@@ -363,6 +371,9 @@ function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
             {tone === 'red' ? 'Reassessment blocked invoicing' : 'Not ready to invoice yet'}
           </div>
           <div className={`text-xs mt-1 ${textBody}`}>{gate?.reason}</div>
+          {needsReassessment && quot.plateNo && (
+            <ReassessmentLauncher plateNo={quot.plateNo} />
+          )}
           {gate?.reassessment?.rwaNumber && (
             <Link
               to={`/assessments/${gate.reassessment.rwaNumber}`}
@@ -374,6 +385,40 @@ function InvoiceGateCard({ gateState, canIssueInvoice, busy, onIssue }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// Looks up the most recent appointment for the plate, then renders a
+// "Start Re-Assessment →" button deep-linking into the assessment form
+// with type=Re-Assessment pre-selected. Falls back to a hint pointing
+// at My Garage if no appointment is found.
+function ReassessmentLauncher({ plateNo }) {
+  const [apptId, setApptId] = useState(undefined) // undefined = loading
+  useEffect(() => {
+    let cancelled = false
+    getMostRecentAppointmentByPlate(plateNo).then((appt) => {
+      if (!cancelled) setApptId(appt?.id || null)
+    })
+    return () => { cancelled = true }
+  }, [plateNo])
+
+  if (apptId === undefined) {
+    return <div className="mt-3 text-[11px] text-gray-500 italic">Looking up appointment…</div>
+  }
+  if (!apptId) {
+    return (
+      <div className="mt-3 text-[11px] text-gray-700">
+        Find the appointment in <Link to="/home" className="text-brand font-bold hover:underline">My Garage</Link>, click ASSESS, then choose <strong>Re-Assessment</strong> as the type.
+      </div>
+    )
+  }
+  return (
+    <Link
+      to={`/appointments/${apptId}/assess?type=Re-Assessment`}
+      className="mt-3 inline-block bg-brand hover:bg-brand-dark text-white text-xs font-bold px-4 py-2 rounded-lg shadow"
+    >
+      Start Re-Assessment →
+    </Link>
   )
 }
 

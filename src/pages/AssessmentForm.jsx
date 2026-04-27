@@ -10,7 +10,7 @@
 //   - Supervisor override
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { fetchContextDoc } from '../lib/notifications'
 import { watchVehicles } from '../lib/vehicles'
@@ -61,6 +61,15 @@ function clearDraft(appointmentId) {
 
 export default function AssessmentForm() {
   const { id: appointmentId } = useParams()
+  const [searchParams] = useSearchParams()
+  // Round 22 — when launched via the "Start Re-Assessment →" button on
+  // the invoice gate-fail card, the URL carries ?type=Re-Assessment so
+  // the form starts on the right type. Validate against ASSESS_TYPES so
+  // unknown values silently fall through to the default.
+  const initialType = (() => {
+    const fromUrl = searchParams.get('type')
+    return fromUrl && ASSESS_TYPES.includes(fromUrl) ? fromUrl : 'Initial'
+  })()
   const navigate = useNavigate()
   const { profile } = useAuth()
 
@@ -75,7 +84,7 @@ export default function AssessmentForm() {
   const [header, setHeader] = useState(() => initialDraft?.header || {
     plate: '', make: '', model: '', yearModel: '',
     client: '', branch: '', technician: '', odometer: '',
-    type: 'Initial', date: new Date().toISOString().slice(0, 10),
+    type: initialType, date: new Date().toISOString().slice(0, 10),
   })
   const [itemResults, setItemResults] = useState(() => initialDraft?.itemResults || {})
   // Round 18 — labor selection. `labors` is a code→bool map for the

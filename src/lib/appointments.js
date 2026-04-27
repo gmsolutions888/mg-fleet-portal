@@ -196,6 +196,31 @@ export async function getActiveAppointmentsByPlate(plate) {
   }
 }
 
+// Most recent appointment for a plate regardless of status. Used by the
+// invoice gate-fail card to deep-link the user back into the assessment
+// flow when the post-repair re-assessment hasn't happened yet.
+export async function getMostRecentAppointmentByPlate(plate) {
+  if (!db || !plate) return null
+  const norm = String(plate).toUpperCase().replace(/\s+/g, '')
+  try {
+    const snap = await getDocs(query(
+      collection(db, COLLECTION),
+      where('plateNo', '==', norm),
+    ))
+    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    if (rows.length === 0) return null
+    rows.sort((a, b) => {
+      const ax = Date.parse(a.scheduledAt || '') || 0
+      const bx = Date.parse(b.scheduledAt || '') || 0
+      return bx - ax
+    })
+    return rows[0]
+  } catch (err) {
+    console.warn('[appointments] getMostRecentAppointmentByPlate failed:', err)
+    return null
+  }
+}
+
 // Branch admin approves a fleet booking → flips PENDING_BRANCH_APPROVAL to
 // CONFIRMED and notifies the booking's MG Fleet manager (via branch + company
 // audience). Caller is expected to have already gated on canReviewAtBranch /
