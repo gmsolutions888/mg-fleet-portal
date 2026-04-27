@@ -42,6 +42,7 @@ import StatementOfAccount from './pages/StatementOfAccount'
 import FleetCompanies from './pages/admin/FleetCompanies'
 import Users from './pages/admin/Users'
 import VehicleCatalogIngest from './pages/admin/VehicleCatalogIngest'
+import CaviteCatalogIngest from './pages/admin/CaviteCatalogIngest'
 import AuthComplete from './pages/AuthComplete'
 import More from './pages/More'
 
@@ -127,6 +128,7 @@ export default function App() {
           <Route path="/admin/fleet-companies"  element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />
           <Route path="/admin/users"            element={<ProtectedRoute requireAdmin><Users /></ProtectedRoute>} />
           <Route path="/admin/vehicle-catalog"  element={<ProtectedRoute requireAdmin><VehicleCatalogIngest /></ProtectedRoute>} />
+          <Route path="/admin/cavite-catalog"   element={<ProtectedRoute requireAdmin><CaviteCatalogIngest /></ProtectedRoute>} />
 
           {/* Mobile More screen — overflow menu for the BottomNav */}
           <Route path="/more"                  element={<ProtectedRoute allowedCategories={BOTH}><More /></ProtectedRoute>} />

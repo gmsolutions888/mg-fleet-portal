@@ -98,6 +98,21 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // ─── Round 34 Cavite price catalogs ───────────────────────────────────
+    // Services (labor) — make+model priced, joined via VMakeID/VModelID.
+    match /caviteServices/{docId} {
+      allow read, write: if request.auth != null;
+    }
+    // Parts — make+model priced, with both PartsCost and PartsSRP for
+    // margin tracking when the cost field exists.
+    match /caviteParts/{docId} {
+      allow read, write: if request.auth != null;
+    }
+    // Consumables — universal (no make/model FK).
+    match /caviteConsumables/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
     // ─── Default deny ─────────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

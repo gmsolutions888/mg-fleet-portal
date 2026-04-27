@@ -119,6 +119,7 @@ function CustomerMenu({ profile }) {
             <Row to="/admin/fleet-companies" icon="tool" label="Fleet Companies" />
             <Row to="/admin/users" icon="user" label="Users" />
             <Row to="/admin/vehicle-catalog" icon="car" label="Vehicle Catalog" />
+            <Row to="/admin/cavite-catalog" icon="doc" label="Price Catalog" />
           </div>
         </>
       )}
@@ -159,6 +160,7 @@ function StaffMenu({ profile }) {
             <Row to="/admin/fleet-companies" icon="tool" label="Fleet Companies" />
             <Row to="/admin/users" icon="user" label="Users" />
             <Row to="/admin/vehicle-catalog" icon="car" label="Vehicle Catalog" />
+            <Row to="/admin/cavite-catalog" icon="doc" label="Price Catalog" />
           </div>
         </>
       )}
