@@ -41,6 +41,7 @@ import StatementOfAccount from './pages/StatementOfAccount'
 
 import FleetCompanies from './pages/admin/FleetCompanies'
 import Users from './pages/admin/Users'
+import VehicleCatalogIngest from './pages/admin/VehicleCatalogIngest'
 import AuthComplete from './pages/AuthComplete'
 import More from './pages/More'
 
@@ -123,8 +124,9 @@ export default function App() {
           <Route path="/portal/statement"      element={<ProtectedRoute allowedCategories={CUSTOMER}><StatementOfAccount customerView /></ProtectedRoute>} />
 
           {/* Admin (gated by is_admin flag, not by role category) */}
-          <Route path="/admin/fleet-companies" element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />
-          <Route path="/admin/users"           element={<ProtectedRoute requireAdmin><Users /></ProtectedRoute>} />
+          <Route path="/admin/fleet-companies"  element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />
+          <Route path="/admin/users"            element={<ProtectedRoute requireAdmin><Users /></ProtectedRoute>} />
+          <Route path="/admin/vehicle-catalog"  element={<ProtectedRoute requireAdmin><VehicleCatalogIngest /></ProtectedRoute>} />
 
           {/* Mobile More screen — overflow menu for the BottomNav */}
           <Route path="/more"                  element={<ProtectedRoute allowedCategories={BOTH}><More /></ProtectedRoute>} />

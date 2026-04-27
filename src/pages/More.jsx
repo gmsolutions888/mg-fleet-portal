@@ -118,6 +118,7 @@ function CustomerMenu({ profile }) {
           <div className="bg-white divide-y">
             <Row to="/admin/fleet-companies" icon="tool" label="Fleet Companies" />
             <Row to="/admin/users" icon="user" label="Users" />
+            <Row to="/admin/vehicle-catalog" icon="car" label="Vehicle Catalog" />
           </div>
         </>
       )}
@@ -160,6 +161,7 @@ function StaffMenu({ profile }) {
           <div className="bg-white divide-y">
             <Row to="/admin/fleet-companies" icon="tool" label="Fleet Companies" />
             <Row to="/admin/users" icon="user" label="Users" />
+            <Row to="/admin/vehicle-catalog" icon="car" label="Vehicle Catalog" />
           </div>
         </>
       )}
