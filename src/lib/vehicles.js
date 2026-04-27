@@ -169,7 +169,12 @@ function toVehicle(assessment, pmsRecord) {
     model: h.model || '',
     brandModel: h.make && h.model ? `${h.make} - ${h.model}` : (h.make || h.model || ''),
     yearModel: h.yearModel || '',
-    assignedTo: h.technician || '',
+    // Round 25a — was `h.technician`. The technician on an assessment is
+    // the field assessor, NOT the driver / custodian. That leak made the
+    // assessor's name appear as the customer on every invoice. Until we
+    // capture a real driver name on bookings, leave this empty so the
+    // quote create page doesn't auto-stuff a wrong value.
+    assignedTo: '',
     latestOdo: odo,
     roadworthy: bucket,
     company: h.client || null,

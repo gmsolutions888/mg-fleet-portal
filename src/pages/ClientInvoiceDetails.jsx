@@ -13,6 +13,7 @@ import { isCustomer } from '../lib/roles'
 import { profileCompany } from '../lib/vehicles'
 import { CREDIT_NOTE_KIND } from '../lib/creditNotes'
 import CreditNotesSection from '../components/CreditNotesSection'
+import PrintInvoice from '../components/PrintInvoice'
 import {
   CLIENT_INVOICE_STATUS,
   PAYMENT_METHODS,
@@ -102,6 +103,11 @@ export default function ClientInvoiceDetails() {
 
   return (
     <div className="pb-32">
+      {/* Print-only: clean external invoice document. Hidden on screen. */}
+      <PrintInvoice kind="client" invoice={invoice} />
+
+      {/* Screen-only: full audit detail. */}
+      <div className="print:hidden">
       <PageHero
         eyebrow={customerView ? 'YOUR INVOICE' : 'CLIENT INVOICE'}
         title={invoice.code}
@@ -221,6 +227,7 @@ export default function ClientInvoiceDetails() {
           onRecorded={() => setPayModalOpen(false)}
         />
       )}
+      </div>
     </div>
   )
 }

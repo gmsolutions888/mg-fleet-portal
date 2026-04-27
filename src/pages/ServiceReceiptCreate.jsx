@@ -63,10 +63,18 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   )
 
   const [odo, setOdo] = useState(vehicle.latestOdo || 0)
-  const [customerName, setCustomerName] = useState(vehicle.assignedTo || 'CUSTOMER 100')
+  // Round 25a — customer name is no longer auto-populated from the
+  // vehicle registry's `assignedTo` (that field used to mistakenly carry
+  // the assessor's name; see vehicles.js). Defaults blank now; the user
+  // types the actual driver / contact for fleet jobs, or leaves blank
+  // and lets the company name carry the bill-to.
+  const [customerName, setCustomerName] = useState('')
   const [mobile, setMobile] = useState('')
   const [notes, setNotes] = useState('')
-  const [mechanic, setMechanic] = useState('Amelia Castillo')
+  // Round 25a — was hardcoded 'Amelia Castillo' (a name from dummy
+  // mechanics seed data). Now defaults blank; the prefill effect below
+  // sets it from the appointment's assigned mechanic when available.
+  const [mechanic, setMechanic] = useState('')
   const [items, setItems] = useState([
     { type: 'Labor', qty: 1, description: 'PREVENTIVE MAINTENANCE SERVICE', unitCost: 2500 },
     { type: 'Parts', qty: 1, description: '', unitCost: 0 },
@@ -77,11 +85,12 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   // Sync to selected vehicle when list arrives / plate changes. Skipped
   // when the assessment prefill already wrote the odometer/customer —
   // that path has fresher data and we don't want to clobber it.
+  // Round 25a — customer no longer pulled from vehicle.assignedTo
+  // (that field used to leak the assessor's name).
   useEffect(() => {
     if (!vehicle) return
     if (assessmentPrefilled) return
     setOdo(vehicle.latestOdo || 0)
-    setCustomerName(vehicle.assignedTo || customerName)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vehicle.plateNo, assessmentPrefilled])
 
@@ -219,8 +228,8 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
             <Field label="Plate No. *">
               <input className="input uppercase font-mono" value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} required />
             </Field>
-            <Field label="Name *">
-              <input className="input" value={customerName} onChange={(e) => setCustomerName(e.target.value.toUpperCase())} required />
+            <Field label="Driver / Contact" hint="Person who turned over the unit. Optional for fleet jobs — the company is the bill-to.">
+              <input className="input" value={customerName} onChange={(e) => setCustomerName(e.target.value.toUpperCase())} placeholder="e.g. Juan Dela Cruz" />
             </Field>
             <Field label="Brand / Model">
               <div className="py-2 text-gray-800 text-sm">{vehicle.brandModel || '—'}</div>
@@ -358,11 +367,12 @@ function Section({ title, children }) {
   )
 }
 
-function Field({ label, children, className = '' }) {
+function Field({ label, hint, children, className = '' }) {
   return (
     <div className={className}>
       <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">{label}</label>
       {children}
+      {hint && <div className="text-[10px] text-gray-400 mt-1">{hint}</div>}
     </div>
   )
 }

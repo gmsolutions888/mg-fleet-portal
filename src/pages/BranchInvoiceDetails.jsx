@@ -19,6 +19,7 @@ import {
 import { getFleetCompanyByName } from '../lib/fleetCompanies'
 import { CREDIT_NOTE_KIND } from '../lib/creditNotes'
 import CreditNotesSection from '../components/CreditNotesSection'
+import PrintInvoice from '../components/PrintInvoice'
 import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
 import StatusPill from '../components/ui/StatusPill'
@@ -77,6 +78,11 @@ export default function BranchInvoiceDetails() {
 
   return (
     <div className="pb-32">
+      {/* Print-only: clean external invoice document. Hidden on screen. */}
+      <PrintInvoice kind="branch" invoice={invoice} />
+
+      {/* Screen-only: full audit detail (hidden on print via Tailwind's print: variants below). */}
+      <div className="print:hidden">
       <PageHero
         eyebrow="BRANCH INVOICE"
         title={invoice.code}
@@ -189,6 +195,7 @@ export default function BranchInvoiceDetails() {
           onRecorded={() => setPayModalOpen(false)}
         />
       )}
+      </div>
     </div>
   )
 }
