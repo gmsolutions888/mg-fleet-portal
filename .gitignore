@@ -22,3 +22,4 @@ MG Cavite Database/
 
 # One-off inspection / migration scripts — not shipped with the app.
 scripts/
+.vercel
