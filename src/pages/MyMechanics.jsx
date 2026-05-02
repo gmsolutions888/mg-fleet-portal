@@ -4,8 +4,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { APPOINTMENTS, MECHANICS, formatDateTime } from '../lib/dummyData'
+import { useAuth } from '../context/AuthContext'
+import { formatDateTime } from '../lib/dummyData'
 import { watchVehicles } from '../lib/vehicles'
+import { watchAppointments } from '../lib/appointments'
+import { watchUsers } from '../lib/users'
+
+const ASSESSOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
@@ -16,38 +21,56 @@ function sameDay(a, b) {
 }
 
 export default function MyMechanics() {
+  const { profile } = useAuth()
   const [vehicles, setVehicles] = useState([])
+  const [appointments, setAppointments] = useState([])
+  const [allUsers, setAllUsers] = useState([])
   const [selectedDate, setSelectedDate] = useState(new Date())
   const [showCalendar, setShowCalendar] = useState(false)
-  const [rescheduleTarget, setRescheduleTarget] = useState(null) // { appointmentId, mechanic }
+  const [rescheduleTarget, setRescheduleTarget] = useState(null)
   const [showRescheduleCalendar, setShowRescheduleCalendar] = useState(false)
-  const [scheduleUpdates, setScheduleUpdates] = useState({}) // appointmentId → new Date
+  const [scheduleUpdates, setScheduleUpdates] = useState({})
   const [toast, setToast] = useState(null)
 
   useEffect(() => {
-    const unsub = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
-    return unsub
+    const u1 = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
+    const u2 = watchAppointments({}, ({ rows }) => setAppointments(rows))
+    const u3 = watchUsers((list) => setAllUsers(list))
+    return () => { u1?.(); u2?.(); u3?.() }
   }, [])
 
-  // Group appointments by mechanic, filtered by selected date.
+  // Assessors/warriors from Firestore users, filtered by the current user's branch
+  const userBranch = (profile?.branch || '').toUpperCase().trim()
+  const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
+
+  const mechanics = useMemo(() => {
+    return allUsers
+      .filter((u) => {
+        if (!ASSESSOR_ROLES.has(String(u.role || '').toLowerCase())) return false
+        if (u.is_active === 0) return false
+        // Fleet manager sees all; branch users see only their branch
+        if (!isFleetMgr && userBranch) {
+          return (u.branch || '').toUpperCase().trim() === userBranch
+        }
+        return true
+      })
+      .map((u) => ({ id: u.id, name: u.name || u.email || '—', branch: u.branch || null }))
+  }, [allUsers, userBranch, isFleetMgr])
+
+  // Group appointments by mechanic
   const groups = useMemo(() => {
     const m = {}
-    for (const mech of MECHANICS) m[mech.name] = []
-    for (const a of APPOINTMENTS) {
-      if (a.mechanic && a.mechanic !== 'Not yet assigned') {
-        const apptDate = scheduleUpdates[a.id]
-          ? new Date(scheduleUpdates[a.id])
-          : a.arrivedAt ? new Date(a.arrivedAt) : null
-        if (apptDate && !sameDay(apptDate, selectedDate)) continue
-        if (!apptDate && !sameDay(selectedDate, new Date())) continue
-        if (!m[a.mechanic]) m[a.mechanic] = []
-        const v = vehicles.find((x) => x.plateNo === a.plateNo)
-        const scheduledAt = scheduleUpdates[a.id] || a.arrivedAt
-        m[a.mechanic].push({ ...a, brandModel: v?.brandModel || '', arrivedAt: scheduledAt })
-      }
+    for (const mech of mechanics) m[mech.name] = []
+    const activeStatuses = new Set(['BOOKED', 'CONFIRMED', 'TENTATIVE', 'ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
+    for (const a of appointments) {
+      if (!a.mechanic || a.mechanic === 'Not yet assigned') continue
+      if (!activeStatuses.has(a.status)) continue
+      if (!m[a.mechanic]) m[a.mechanic] = []
+      const v = vehicles.find((x) => x.plateNo === a.plateNo)
+      m[a.mechanic].push({ ...a, brandModel: v?.brandModel || '' })
     }
     return m
-  }, [vehicles, selectedDate, scheduleUpdates])
+  }, [vehicles, appointments, mechanics])
 
   const mechsWith = Object.entries(groups).filter(([_, list]) => list.length > 0)
   const mechsWithout = Object.entries(groups).filter(([_, list]) => list.length === 0)
@@ -79,7 +102,7 @@ export default function MyMechanics() {
     <div className="pb-20">
       <PageHero
         eyebrow="MY MECHANICS"
-        title={`${MECHANICS.length} mechanic${MECHANICS.length === 1 ? '' : 's'}`}
+        title={`${mechanics.length} mechanic${mechanics.length === 1 ? '' : 's'}`}
         subtitle={dateLabel}
         right={<HeroStat value={mechsWith.length} label="ASSIGNED" tone="solid" />}
       />
@@ -107,7 +130,7 @@ export default function MyMechanics() {
               <CalendarPicker value={selectedDate} onChange={handleDateSelect} onClose={() => setShowCalendar(false)} />
             )}
           </div>
-          {mechsWith.length === 0 && mechsWithout.length === MECHANICS.length && (
+          {mechsWith.length === 0 && mechsWithout.length === mechanics.length && (
             <div className="bg-white rounded-2xl border px-4 py-8 text-center text-sm text-gray-500">
               No mechanic assignments for this date.
             </div>
@@ -155,7 +178,7 @@ export default function MyMechanics() {
                 {mechsWithout.map(([name]) => (
                   <MechanicIdle key={name} name={name} />
                 ))}
-                {mechsWith.length === 0 && mechsWithout.length === MECHANICS.length && (
+                {mechsWith.length === 0 && mechsWithout.length === mechanics.length && (
                   <tr>
                     <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
                       No mechanic assignments for this date.

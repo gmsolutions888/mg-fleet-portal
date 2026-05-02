@@ -4,14 +4,17 @@
 // desktop Topbar. On md+ users shouldn't reach this page because the
 // sidebar exposes everything directly — if they do, we render normally.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   isCustomer, roleLabel,
-  canBooking, canServiceRequest, canServiceQuotation,
-  canReports, canMyGarage, canFleet, canScheduleService,
+  canBooking, canBookingRequests, canUnbilledQuotations, canServiceRequest, canServiceQuotation,
+  canBranchInvoice, canClientInvoice, canCreditNotes,
+  canReports, canMyGarage, canFleet, canCustomers, canMechanics, canScheduleService,
 } from '../lib/roles'
+import { watchAppointments, APPT_STATUS } from '../lib/appointments'
+import { watchReceipts, availableQuotationActions, effectiveQuotationStatus, QUOT_STATUS } from '../lib/serviceReceipts'
 import Icon from '../components/ui/Icon'
 
 function SectionHeader({ children }) {
@@ -22,13 +25,18 @@ function SectionHeader({ children }) {
   )
 }
 
-function Row({ to, label, icon, onClick }) {
+function Row({ to, label, icon, badge, onClick }) {
   const body = (
     <div className="flex items-center gap-3 px-4 py-3.5 bg-white hover:bg-gray-50 active:bg-gray-100">
       <div className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center shrink-0">
         <Icon name={icon} className="w-5 h-5" />
       </div>
       <span className="flex-1 text-[15px] text-gray-800 font-medium">{label}</span>
+      {badge != null && badge > 0 && (
+        <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-semibold">
+          {badge}
+        </span>
+      )}
       <span className="text-gray-300 text-xl leading-none">›</span>
     </div>
   )
@@ -104,14 +112,30 @@ export default function More() {
 
 function CustomerMenu({ profile }) {
   const role = profile?.role
+  const [forReviewCount, setForReviewCount] = useState(0)
+  useEffect(() => {
+    if (!canServiceQuotation(role)) return
+    const unsub = watchReceipts({ kind: 'quotation' }, ({ rows }) => {
+      const cf = (profile?.company_id || profile?.company || '').toLowerCase().trim()
+      const count = rows.filter((q) => {
+        if (effectiveQuotationStatus(q) !== QUOT_STATUS.FOR_CLIENT_REVIEW) return false
+        if (!cf) return true
+        const rc = (q.company || '').toLowerCase().trim()
+        return rc === cf || rc.includes(cf) || cf.includes(rc)
+      }).length
+      setForReviewCount(count)
+    })
+    return unsub
+  }, [role, profile])
+
   return (
     <>
       <SectionHeader>Fleet</SectionHeader>
       <div className="bg-white divide-y">
         <Row to="/portal/service-log" icon="doc" label="Service Log" />
-        <Row to="/portal/quotations" icon="doc" label="Service Quotations" />
-        <Row to="/portal/invoices" icon="doc" label="Service Receipts" />
-        <Row to="/portal/statement" icon="doc" label="Statement of Account" />
+        {canServiceQuotation(role) && <Row to="/portal/quotations" icon="doc" label="Service Quotations" badge={forReviewCount} />}
+        {canClientInvoice(role) && <Row to="/portal/invoices" icon="doc" label="Service Receipts" />}
+        {canClientInvoice(role) && <Row to="/portal/statement" icon="doc" label="Statement of Account" />}
         {canScheduleService(role) && (
           <Row to="/portal/schedule-service" icon="calendar" label="Request for Service" />
         )}
@@ -134,31 +158,55 @@ function CustomerMenu({ profile }) {
 
 function StaffMenu({ profile }) {
   const role = profile?.role
+  const [quotationNeedsAction, setQuotationNeedsAction] = useState(0)
+  useEffect(() => {
+    if (!canServiceQuotation(role)) return
+    const isFleetMgr = String(role).toLowerCase() === 'general_manager'
+    const unsub = watchReceipts({ kind: 'quotation' }, ({ rows }) => {
+      const visible = isFleetMgr
+        ? rows.filter((q) => effectiveQuotationStatus(q) !== QUOT_STATUS.DRAFT)
+        : rows
+      const count = visible.filter((q) => availableQuotationActions(q, profile).length > 0).length
+      setQuotationNeedsAction(count)
+    })
+    return unsub
+  }, [role, profile])
+
+  const [pendingBookings, setPendingBookings] = useState(0)
+  useEffect(() => {
+    if (!canBookingRequests(role)) return
+    const unsub = watchAppointments({ dummyFallback: false }, ({ rows }) => {
+      setPendingBookings(rows.filter((a) => a.status === APPT_STATUS.PENDING_BOOKING || a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL).length)
+    })
+    return unsub
+  }, [role])
+
   return (
     <>
       <SectionHeader>Quick Links</SectionHeader>
       <div className="bg-white divide-y">
-        {canMyGarage(role) && <Row to="/home/my-mechanics" icon="user" label="My Mechanics" />}
+        {canMechanics(role) && <Row to="/home/my-mechanics" icon="user" label="My Mechanics" />}
         {canBooking(role) && <Row to="/appointments?quicklink=yes" icon="plus" label="+ Booking" />}
         {canServiceRequest(role) && <Row to="/service-receipts/create" icon="plus" label="+ Service Receipt" />}
       </div>
 
       <SectionHeader>Core Operations</SectionHeader>
       <div className="bg-white divide-y">
-        {canServiceQuotation(role) && <Row to="/quotations" icon="doc" label="Service Quotations" />}
-        {canServiceQuotation(role) && <Row to="/quotations/unbilled" icon="doc" label="Services for Quotation" />}
-        <Row to="/branch-invoices" icon="doc" label="Branch Invoices" />
-        <Row to="/client-invoices" icon="doc" label="Client Invoices" />
-        <Row to="/credit-notes" icon="doc" label="Credit Notes" />
+        {canBookingRequests(role) && <Row to="/booking-requests" icon="calendar" label="Booking Requests" badge={pendingBookings} />}
+        {canServiceQuotation(role) && <Row to="/quotations" icon="doc" label="Service Quotations" badge={quotationNeedsAction} />}
+        {canUnbilledQuotations(role) && <Row to="/quotations/unbilled" icon="doc" label="Services for Quotation" />}
+        {canBranchInvoice(role) && <Row to="/branch-invoices" icon="doc" label="Branch Invoices" />}
+        {canClientInvoice(role) && <Row to="/client-invoices" icon="doc" label="Client Invoices" />}
+        {canCreditNotes(role) && <Row to="/credit-notes" icon="doc" label="Credit Notes" />}
         {canReports(role) && <Row to="/reports" icon="backlog" label="Reports" />}
       </div>
 
       <SectionHeader>Data Management</SectionHeader>
       <div className="bg-white divide-y">
-        <Row to="/customers" icon="user" label="Customers" />
+        {canCustomers(role) && <Row to="/customers" icon="user" label="Customers" />}
         {canFleet(role) && <Row to="/vehicles" icon="car" label="Fleet" />}
-        <Row to="/mechanics" icon="tool" label="Mechanics" />
-        <Row to="/services" icon="tool" label="Services Offered" />
+        {canMechanics(role) && <Row to="/mechanics" icon="tool" label="Mechanics" />}
+        {canMechanics(role) && <Row to="/services" icon="tool" label="Services Offered" />}
       </div>
 
       {profile?.is_admin && (

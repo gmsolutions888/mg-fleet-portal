@@ -247,15 +247,45 @@ export async function approveBookingAtBranch(id) {
   })
   const appt = await fetchContextDoc(COLLECTION, id)
   if (appt) {
+    const plate = appt.plateNo
+    const timeInfo = `${appt.scheduledTime || ''} · ${appt.branch || ''}`.trim()
+
+    // Notify fleet client
     emitNotification({
       kind: 'booking',
-      title: `Booking confirmed — ${appt.plateNo}`,
-      body: `${appt.scheduledTime || ''} · ${appt.branch || ''}`.trim(),
-      plateNo: appt.plateNo,
+      title: `Booking approved — ${plate}`,
+      body: `Your vehicle ${plate} has been approved for service · ${timeInfo}`,
+      plateNo: plate,
       appointmentId: id,
-      link: `/appointments`,
-      branch: appt.branch || null,
+      link: '/portal/schedule-service',
+      branch: null,
       company: appt.company || null,
+      target_roles: ['fleet_client', 'fleet_client_manager'],
+    })
+
+    // Notify call center
+    emitNotification({
+      kind: 'booking',
+      title: `Booking approved — ${plate}`,
+      body: `Branch approved · ${appt.customer || 'Fleet client'} · ${timeInfo}`,
+      plateNo: plate,
+      appointmentId: id,
+      link: '/booking-requests',
+      branch: null,
+      company: null,
+      target_roles: ['call_center'],
+    })
+
+    // Notify branch (other branch staff)
+    emitNotification({
+      kind: 'booking',
+      title: `Booking confirmed — ${plate}`,
+      body: timeInfo,
+      plateNo: plate,
+      appointmentId: id,
+      link: '/appointments',
+      branch: appt.branch || null,
+      company: null,
     })
   }
 }
@@ -277,15 +307,33 @@ export async function rejectBookingAtBranch(id, reason) {
   })
   const appt = await fetchContextDoc(COLLECTION, id)
   if (appt) {
+    const plate = appt.plateNo
+    const reasonText = reason || 'No reason provided'
+
+    // Notify fleet client
     emitNotification({
       kind: 'booking',
-      title: `Booking rejected — ${appt.plateNo}`,
-      body: reason || null,
-      plateNo: appt.plateNo,
+      title: `Booking rejected — ${plate}`,
+      body: `Your booking for ${plate} was rejected · ${reasonText}`,
+      plateNo: plate,
       appointmentId: id,
-      link: `/appointments`,
-      branch: appt.branch || null,
+      link: '/portal/schedule-service',
+      branch: null,
       company: appt.company || null,
+      target_roles: ['fleet_client', 'fleet_client_manager'],
+    })
+
+    // Notify call center
+    emitNotification({
+      kind: 'booking',
+      title: `Booking rejected — ${plate}`,
+      body: `Branch rejected · ${appt.customer || 'Fleet client'} · ${reasonText}`,
+      plateNo: plate,
+      appointmentId: id,
+      link: '/booking-requests',
+      branch: null,
+      company: null,
+      target_roles: ['call_center'],
     })
   }
 }
@@ -346,15 +394,34 @@ export async function assignMechanic(id, mechanicName) {
   })
   const appt = await fetchContextDoc(COLLECTION, id)
   if (appt) {
+    const plate = appt.plateNo
+    const title = `${plate} assigned to ${mechanicName || 'Mechanic'}`
+
+    // Notify branch users
     emitNotification({
       kind: 'status',
-      title: `${mechanicName || 'Mechanic'} assigned to ${appt.plateNo}`,
-      plateNo: appt.plateNo,
+      title,
+      body: `${appt.customer || 'Customer'} · ${appt.scheduledTime || ''} · ${appt.branch || ''}`.trim(),
+      plateNo: plate,
       appointmentId: id,
-      link: `/appointments/${id}/update`,
+      link: `/appointments`,
       branch: appt.branch || null,
-      // Internal-only: do NOT notify fleet client on mechanic assignment
       company: null,
+      target_roles: ['admin_supervisor', 'admin_assistance', 'operations_manager'],
+    })
+
+    // Notify the assigned warrior/assessor directly — they pick this up
+    // via the plateNo cross-reference in the warrior notification filter.
+    emitNotification({
+      kind: 'status',
+      title: `${plate} assigned to ${mechanicName || 'Mechanic'}`,
+      body: `${appt.customer || 'Customer'} · ${appt.branch || ''}`.trim(),
+      plateNo: plate,
+      appointmentId: id,
+      link: `/home`,
+      branch: appt.branch || null,
+      company: null,
+      target_roles: ['field_assessor', 'warrior', 'dispatcher', 'technician'],
     })
   }
 }

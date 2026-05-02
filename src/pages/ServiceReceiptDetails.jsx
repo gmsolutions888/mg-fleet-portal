@@ -52,6 +52,34 @@ export default function ServiceReceiptDetails() {
 
   const isQuotation = receipt.kind === 'quotation'
 
+  // Restrict quotation access based on role and status
+  if (isQuotation) {
+    const role = String(profile?.role || '').toLowerCase()
+    const qStatus = effectiveQuotationStatus(receipt)
+    const isDraft = qStatus === QUOT_STATUS.DRAFT
+    const isInternalOnly = isDraft || qStatus === QUOT_STATUS.FOR_MG_FLEET_REVIEW
+
+    // Fleet manager and call center can't see drafts
+    if (isDraft && (role === 'general_manager' || role === 'call_center') && !profile?.is_admin) {
+      return (
+        <div className="p-4 sm:p-6 space-y-3">
+          <div className="text-gray-500">This quotation is still in draft and not yet forwarded for review.</div>
+          <Link to="/quotations" className="text-brand font-bold text-sm hover:underline">← Back to Quotations</Link>
+        </div>
+      )
+    }
+
+    // Fleet clients can only see forwarded/approved quotations
+    if (isInternalOnly && (role === 'fleet_client' || role === 'fleet_client_manager')) {
+      return (
+        <div className="p-4 sm:p-6 space-y-3">
+          <div className="text-gray-500">This quotation has not been forwarded to you yet.</div>
+          <Link to="/portal/quotations" className="text-brand font-bold text-sm hover:underline">← Back to Quotations</Link>
+        </div>
+      )
+    }
+  }
+
   return isQuotation
     ? <QuotationDetail quot={receipt} profile={profile} />
     : <ReceiptDetail receipt={receipt} />
@@ -121,9 +149,18 @@ function QuotationDetail({ quot, profile }) {
     }
   }
 
+  const [confirmAction, setConfirmAction] = useState(null)
+
   const onAction = async (action) => {
     if (action.requiresText) { setModalAction(action); return }
-    await runTransition(action, null)
+    // Show confirmation modal for key actions
+    setConfirmAction(action)
+  }
+
+  const onConfirm = async () => {
+    if (!confirmAction) return
+    setConfirmAction(null)
+    await runTransition(confirmAction, null)
   }
 
   const runTransition = async (action, text) => {
@@ -136,6 +173,11 @@ function QuotationDetail({ quot, profile }) {
         byProfile: profile,
       })
       setModalAction(null)
+      // Redirect fleet manager / call center to quotations list after bounce-back
+      const role = String(profile?.role || '').toLowerCase()
+      if (action.key === QUOT_ACTION.BOUNCE_TO_SUPERVISOR && (role === 'general_manager' || role === 'call_center')) {
+        navigate('/quotations')
+      }
     } catch (err) {
       console.error('[quotation] transition failed:', err)
       setError(err.message || String(err))
@@ -324,6 +366,42 @@ function QuotationDetail({ quot, profile }) {
           onCancel={() => setModalAction(null)}
           onSubmit={(text) => runTransition(modalAction, text)}
         />
+      )}
+
+      {/* Confirmation modal for non-text actions */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-gray-900 mb-2">Confirm Action</div>
+              <div className="text-sm text-gray-600">
+                Are you sure you want to <strong>{confirmAction.label.toLowerCase()}</strong> this quotation?
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmAction(null)}
+                disabled={busy}
+                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onConfirm}
+                disabled={busy}
+                className={`flex-1 text-sm font-bold text-white px-4 py-3 rounded-xl shadow disabled:opacity-40 ${
+                  confirmAction.tone === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-brand hover:bg-brand-dark'
+                }`}
+              >
+                {busy ? 'Processing…' : confirmAction.label}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

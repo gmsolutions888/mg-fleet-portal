@@ -4,7 +4,7 @@
 // portal's needs without breaking mg-fms (mg-fms ignores unknown fields).
 
 import {
-  collection, doc, getDoc, onSnapshot, orderBy, query,
+  addDoc, collection, doc, getDoc, onSnapshot, orderBy, query,
   serverTimestamp, setDoc, updateDoc, deleteDoc,
 } from 'firebase/firestore'
 import { auth, db } from './firebase'
@@ -39,6 +39,20 @@ export async function updateUser(uid, patch) {
   clean.updatedAt = serverTimestamp()
   clean.updatedBy = auth?.currentUser?.uid || null
   await updateDoc(doc(db, COLLECTION, uid), clean)
+}
+
+export async function createUserDoc(data) {
+  if (!db) throw new Error('Firestore not configured.')
+  const ref = await addDoc(collection(db, COLLECTION), {
+    name: (data.name || '').trim(),
+    email: (data.email || '').trim() || null,
+    role: data.role || 'field_assessor',
+    branch: (data.branch || '').trim() || null,
+    is_active: 1,
+    createdAt: serverTimestamp(),
+    createdBy: auth?.currentUser?.uid || null,
+  })
+  return ref.id
 }
 
 export async function deleteUserDoc(uid) {

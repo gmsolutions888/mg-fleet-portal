@@ -12,68 +12,75 @@
 //   booking          — Service Bookings (/appointments)
 //   assessment       — Vehicle assessment (/appointments/:id/assess, /pms)
 //   serviceRequest   — Service Receipts (/service-receipts)
-//   serviceQuotation — Service Quotations (/quotations)
+//   serviceQuotation — Service Quotations (/quotations). 'read' = read-only.
+//   branchInvoice    — Branch Invoices (/branch-invoices)
+//   clientInvoice    — Client Invoices (/client-invoices)
+//   creditNotes      — Credit Notes (/credit-notes)
 //   reports          — Reports (/reports)
 //   myGarage         — My Garage dashboard + My Mechanics (/home)
-//   fleet            — Data Management > Fleet (/vehicles)
+//   fleet            — Data Management > Fleet (/vehicles). 'read' = read-only.
+//   customers        — Data Management > Customers (/customers). 'read' = read-only.
 //   myFleet          — My Fleet (/portal/my-fleet)
 //   clientDashboard  — Fleet client dashboard (/portal)
 //   canApproveQuotations — Can approve/disapprove service quotations
 
 export const ROLE_REGISTRY = {
   // --- internal (garage staff) ---
+
+  // PDF Role 1: MG Fleet Manager — system-wide, all branches, all data
   general_manager: {
-    label: 'General Manager',
+    label: 'MG Fleet Manager',
     category: 'internal',
     defaultRoute: '/home',
     booking: true,
-    assessment: true,
+    bookingRequests: true,
     serviceRequest: true,
     serviceQuotation: true,
+    branchInvoice: true,
+    clientInvoice: true,
+    creditNotes: true,
     reports: true,
     myGarage: true,
     fleet: true,
+    customers: true,
   },
-  admin_assistance: {
-    label: 'Admin Assistance',
+
+  // PDF Role 2: MG Fleet Finance — all branches, financial data only
+  finance: {
+    label: 'MG Fleet Finance',
+    category: 'internal',
+    defaultRoute: '/quotations',
+    serviceQuotation: 'read',
+    branchInvoice: true,
+    clientInvoice: true,
+    creditNotes: true,
+    reports: true,
+  },
+  finance_head: {
+    label: 'MG Fleet Finance Head',
+    category: 'internal',
+    defaultRoute: '/quotations',
+    serviceQuotation: 'read',
+    branchInvoice: true,
+    clientInvoice: true,
+    creditNotes: true,
+    reports: true,
+  },
+
+  // PDF Role 3: Branch Admin Supervisor / Ops Manager — branch-scoped
+  admin_supervisor: {
+    label: 'Admin Supervisor',
     category: 'internal',
     defaultRoute: '/home',
     booking: true,
+    assessment: true,
     serviceRequest: true,
     serviceQuotation: true,
+    unbilledQuotations: true,
+    branchInvoice: true,
     reports: true,
     myGarage: true,
-  },
-  field_assessor: {
-    label: 'Field Assessor',
-    category: 'internal',
-    defaultRoute: '/appointments',
-    booking: true,
-    assessment: true,
-    serviceRequest: true,
-  },
-  dispatcher: {
-    label: 'Dispatcher',
-    category: 'internal',
-    defaultRoute: '/appointments',
-    booking: true,
-    assessment: true,
-    serviceRequest: true,
-  },
-  finance: {
-    label: 'Finance',
-    category: 'internal',
-    defaultRoute: '/quotations',
-    serviceQuotation: true,
-    reports: true,
-  },
-  warrior: {
-    label: 'Warrior',
-    category: 'internal',
-    defaultRoute: '/appointments',
-    booking: true,
-    assessment: true,
-    serviceRequest: true,
+    mechanics: true,
   },
   operations_manager: {
     label: 'Operations Manager',
@@ -82,43 +89,68 @@ export const ROLE_REGISTRY = {
     booking: true,
     serviceRequest: true,
     serviceQuotation: true,
+    unbilledQuotations: true,
+    branchInvoice: true,
     reports: true,
     myGarage: true,
+    mechanics: true,
   },
+
+  // PDF Role 4: Field Assessor / Warrior — assigned bookings only
+  // No My Garage, My Mechanics, Service Bookings, Mechanics, or Services Offered
+  field_assessor: {
+    label: 'Field Assessor',
+    category: 'internal',
+    defaultRoute: '/home',
+    assessment: true,
+    serviceQuotation: true,
+    myGarage: true,
+  },
+  warrior: {
+    label: 'Warrior',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    assessment: true,
+    serviceQuotation: true,
+    myGarage: true,
+  },
+  dispatcher: {
+    label: 'Dispatcher',
+    category: 'internal',
+    defaultRoute: '/appointments',
+    assessment: true,
+    serviceQuotation: true,
+    myGarage: true,
+  },
+
+  // PDF Role 5: Call Center — branch-scoped, booking stages only
   call_center: {
     label: 'Call Center',
     category: 'internal',
-    defaultRoute: '/appointments',
+    defaultRoute: '/booking-requests',
     booking: true,
-    serviceQuotation: true,
+    bookingRequests: true,
+    myGarage: 'read',
+    customers: 'read',
+    fleet: 'read',
   },
-  admin_supervisor: {
-    label: 'Admin Supervisor',
+
+  // Not in PDF — kept for backward compatibility with existing users
+  admin_assistance: {
+    label: 'Admin Assistance',
     category: 'internal',
-    defaultRoute: '/appointments',
+    defaultRoute: '/home',
     booking: true,
-    assessment: true,
     serviceRequest: true,
     serviceQuotation: true,
-  },
-  finance_head: {
-    label: 'Finance Head',
-    category: 'internal',
-    defaultRoute: '/quotations',
-    serviceQuotation: true,
+    unbilledQuotations: true,
     reports: true,
+    myGarage: true,
   },
 
   // --- customer (fleet clients) ---
-  fleet_client: {
-    label: 'Fleet Client',
-    category: 'customer',
-    defaultRoute: '/portal',
-    myFleet: true,
-    clientDashboard: true,
-    serviceQuotation: true,
-    scheduleService: true,
-  },
+
+  // PDF Role 6: Fleet Client Manager — company-scoped approver
   fleet_client_manager: {
     label: 'Fleet Client Manager',
     category: 'customer',
@@ -127,6 +159,20 @@ export const ROLE_REGISTRY = {
     clientDashboard: true,
     serviceQuotation: true,
     canApproveQuotations: true,
+    clientInvoice: true,
+    creditNotes: true,
+    scheduleService: true,
+  },
+
+  // PDF Role 7: Fleet Client — company-scoped, booking + tracking only
+  fleet_client: {
+    label: 'Fleet Client',
+    category: 'customer',
+    defaultRoute: '/portal',
+    myFleet: true,
+    clientDashboard: true,
+    serviceQuotation: 'read',
+    booking: true,
     scheduleService: true,
   },
 
@@ -136,9 +182,8 @@ export const ROLE_REGISTRY = {
     label: 'Technician',
     category: 'internal',
     defaultRoute: '/appointments',
-    booking: true,
     assessment: true,
-    serviceRequest: true,
+    serviceQuotation: true,
   },
 }
 
@@ -152,13 +197,24 @@ export const isInternal = (role) => getRoleInfo(role)?.category === 'internal'
 export const isCustomer = (role) => getRoleInfo(role)?.category === 'customer'
 
 // Feature permission helpers
+// Permissions can be true (full access), 'read' (read-only), or falsy (no access).
 export const canBooking = (role) => Boolean(getRoleInfo(role)?.booking)
 export const canAssess = (role) => Boolean(getRoleInfo(role)?.assessment)
 export const canServiceRequest = (role) => Boolean(getRoleInfo(role)?.serviceRequest)
 export const canServiceQuotation = (role) => Boolean(getRoleInfo(role)?.serviceQuotation)
+export const canServiceQuotationReadOnly = (role) => getRoleInfo(role)?.serviceQuotation === 'read'
+export const canBookingRequests = (role) => Boolean(getRoleInfo(role)?.bookingRequests)
+export const canUnbilledQuotations = (role) => Boolean(getRoleInfo(role)?.unbilledQuotations)
+export const canBranchInvoice = (role) => Boolean(getRoleInfo(role)?.branchInvoice)
+export const canClientInvoice = (role) => Boolean(getRoleInfo(role)?.clientInvoice)
+export const canCreditNotes = (role) => Boolean(getRoleInfo(role)?.creditNotes)
 export const canReports = (role) => Boolean(getRoleInfo(role)?.reports)
 export const canMyGarage = (role) => Boolean(getRoleInfo(role)?.myGarage)
 export const canFleet = (role) => Boolean(getRoleInfo(role)?.fleet)
+export const canFleetReadOnly = (role) => getRoleInfo(role)?.fleet === 'read'
+export const canCustomers = (role) => Boolean(getRoleInfo(role)?.customers)
+export const canCustomersReadOnly = (role) => getRoleInfo(role)?.customers === 'read'
+export const canMechanics = (role) => Boolean(getRoleInfo(role)?.mechanics)
 export const canMyFleet = (role) => Boolean(getRoleInfo(role)?.myFleet)
 export const canClientDashboard = (role) => Boolean(getRoleInfo(role)?.clientDashboard)
 export const canApproveQuotations = (role) => Boolean(getRoleInfo(role)?.canApproveQuotations)
@@ -168,7 +224,7 @@ export const canScheduleService = (role) => Boolean(getRoleInfo(role)?.scheduleS
 export const canBookServices = canBooking
 export const canReviewAtBranch = (role) => {
   const r = normalize(role)
-  return r === 'general_manager' || r === 'admin_supervisor' || r === 'operations_manager'
+  return r === 'general_manager' || r === 'admin_supervisor' || r === 'operations_manager' || r === 'admin_assistance'
 }
 export const canForwardToClient = (role) => {
   const r = normalize(role)

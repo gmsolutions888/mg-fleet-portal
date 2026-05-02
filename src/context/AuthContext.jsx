@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react'
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore'
 import { auth, db, isFirebaseConfigured } from '../lib/firebase'
+import { promotePendingToUser } from '../lib/users'
 
 const AuthContext = createContext(null)
 
@@ -57,7 +58,13 @@ export function AuthProvider({ children }) {
       setProfileError(null)
       if (fbUser) {
         try {
-          const p = await loadUserProfile(fbUser)
+          let p = await loadUserProfile(fbUser)
+          // If no user doc exists, check for a pending invite and promote it
+          if (!p && fbUser.email) {
+            console.log('[auth] no user doc — checking pending invite for', fbUser.email)
+            await promotePendingToUser(fbUser.uid, fbUser.email)
+            p = await loadUserProfile(fbUser)
+          }
           setProfile(p)
           if (p) {
             console.log('[auth] profile loaded via', p._matchedBy, '→', p)

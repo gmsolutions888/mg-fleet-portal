@@ -39,6 +39,7 @@ import CreditNoteDetails from './pages/CreditNoteDetails'
 import ReceivablesReport from './pages/ReceivablesReport'
 import StatementOfAccount from './pages/StatementOfAccount'
 
+import BookingRequests from './pages/BookingRequests'
 import ScheduleService from './pages/ScheduleService'
 import FleetCompanies from './pages/admin/FleetCompanies'
 import Users from './pages/admin/Users'
@@ -46,6 +47,8 @@ import VehicleCatalogIngest from './pages/admin/VehicleCatalogIngest'
 import CaviteCatalogIngest from './pages/admin/CaviteCatalogIngest'
 import AuthComplete from './pages/AuthComplete'
 import More from './pages/More'
+import LandingSignups from './pages/LandingSignups'
+import FixUser from './pages/FixUser'
 
 const INTERNAL = ['internal']
 const CUSTOMER = ['customer']
@@ -58,6 +61,7 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/fix-user" element={<FixUser />} />
         <Route path="/auth/complete" element={<AuthComplete />} />
 
         <Route
@@ -81,9 +85,12 @@ export default function App() {
           <Route path="/appointments/:id/pms"        element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="assessment"><PmsRecord /></ProtectedRoute>} />
           <Route path="/appointments/:id/assign"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="booking"><AssignMechanic /></ProtectedRoute>} />
 
+          {/* Booking Requests — call center view of fleet client requests */}
+          <Route path="/booking-requests"          element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="bookingRequests"><BookingRequests /></ProtectedRoute>} />
+
           {/* Quotations (requires serviceQuotation permission) */}
           <Route path="/quotations"            element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><Quotations /></ProtectedRoute>} />
-          <Route path="/quotations/unbilled"   element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><Quotations unbilledOnly /></ProtectedRoute>} />
+          <Route path="/quotations/unbilled"   element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="unbilledQuotations"><Quotations unbilledOnly /></ProtectedRoute>} />
           <Route path="/quotations/create"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="serviceQuotation"><ServiceReceiptCreate kind="quotation" /></ProtectedRoute>} />
 
           {/* Service Receipts (requires serviceRequest permission) */}
@@ -92,16 +99,16 @@ export default function App() {
           <Route path="/service-receipts/:code"  element={<ProtectedRoute allowedCategories={BOTH}><ServiceReceiptDetails /></ProtectedRoute>} />
 
           {/* Branch Invoices (branch → MG Fleet, Round 12) */}
-          <Route path="/branch-invoices"       element={<ProtectedRoute allowedCategories={INTERNAL}><BranchInvoices /></ProtectedRoute>} />
-          <Route path="/branch-invoices/:code" element={<ProtectedRoute allowedCategories={INTERNAL}><BranchInvoiceDetails /></ProtectedRoute>} />
+          <Route path="/branch-invoices"       element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="branchInvoice"><BranchInvoices /></ProtectedRoute>} />
+          <Route path="/branch-invoices/:code" element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="branchInvoice"><BranchInvoiceDetails /></ProtectedRoute>} />
 
           {/* Client Invoices (MG Fleet → fleet client, Round 13) */}
-          <Route path="/client-invoices"       element={<ProtectedRoute allowedCategories={INTERNAL}><ClientInvoices /></ProtectedRoute>} />
-          <Route path="/client-invoices/:code" element={<ProtectedRoute allowedCategories={BOTH}><ClientInvoiceDetails /></ProtectedRoute>} />
+          <Route path="/client-invoices"       element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="clientInvoice"><ClientInvoices /></ProtectedRoute>} />
+          <Route path="/client-invoices/:code" element={<ProtectedRoute allowedCategories={BOTH} requiredPermission="clientInvoice"><ClientInvoiceDetails /></ProtectedRoute>} />
 
           {/* Credit Notes (escape hatch for already-paid/billed invoices, Round 15) */}
-          <Route path="/credit-notes"          element={<ProtectedRoute allowedCategories={INTERNAL}><CreditNotes /></ProtectedRoute>} />
-          <Route path="/credit-notes/:code"    element={<ProtectedRoute allowedCategories={BOTH}><CreditNoteDetails /></ProtectedRoute>} />
+          <Route path="/credit-notes"          element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="creditNotes"><CreditNotes /></ProtectedRoute>} />
+          <Route path="/credit-notes/:code"    element={<ProtectedRoute allowedCategories={BOTH} requiredPermission="creditNotes"><CreditNoteDetails /></ProtectedRoute>} />
 
           {/* Reports (requires reports permission) */}
           <Route path="/reports"                  element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="reports"><Reports /></ProtectedRoute>} />
@@ -109,7 +116,7 @@ export default function App() {
           <Route path="/reports/soa/:company"     element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="reports"><StatementOfAccount /></ProtectedRoute>} />
 
           {/* Data management */}
-          <Route path="/customers"             element={<ProtectedRoute allowedCategories={INTERNAL}><Customers /></ProtectedRoute>} />
+          <Route path="/customers"             element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="customers"><Customers /></ProtectedRoute>} />
           <Route path="/vehicles"              element={<ProtectedRoute allowedCategories={INTERNAL} requiredPermission="fleet"><Vehicles /></ProtectedRoute>} />
           <Route path="/vehicles/search"       element={<ProtectedRoute allowedCategories={BOTH}>{ph('Vehicle Search', 'Jump straight to a plate from the topbar.')}</ProtectedRoute>} />
           <Route path="/vehicles/:plateNo"     element={<ProtectedRoute allowedCategories={BOTH}><VehicleDetails /></ProtectedRoute>} />
@@ -123,11 +130,12 @@ export default function App() {
           <Route path="/portal/my-fleet"       element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="myFleet"><MyFleet /></ProtectedRoute>} />
           <Route path="/portal/service-log"    element={<ProtectedRoute allowedCategories={CUSTOMER}><ServiceLog /></ProtectedRoute>} />
           <Route path="/portal/quotations"     element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="serviceQuotation"><Quotations customerView /></ProtectedRoute>} />
-          <Route path="/portal/invoices"       element={<ProtectedRoute allowedCategories={CUSTOMER}><ClientInvoices customerView /></ProtectedRoute>} />
-          <Route path="/portal/statement"      element={<ProtectedRoute allowedCategories={CUSTOMER}><StatementOfAccount customerView /></ProtectedRoute>} />
+          <Route path="/portal/invoices"       element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="clientInvoice"><ClientInvoices customerView /></ProtectedRoute>} />
+          <Route path="/portal/statement"      element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="clientInvoice"><StatementOfAccount customerView /></ProtectedRoute>} />
           <Route path="/portal/schedule-service" element={<ProtectedRoute allowedCategories={CUSTOMER} requiredPermission="scheduleService"><ScheduleService /></ProtectedRoute>} />
 
           {/* Admin (gated by is_admin flag, not by role category) */}
+          <Route path="/admin/fleet-signups"     element={<ProtectedRoute requireAdmin><LandingSignups /></ProtectedRoute>} />
           <Route path="/admin/fleet-companies"  element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />
           <Route path="/admin/users"            element={<ProtectedRoute requireAdmin><Users /></ProtectedRoute>} />
           <Route path="/admin/vehicle-catalog"  element={<ProtectedRoute requireAdmin><VehicleCatalogIngest /></ProtectedRoute>} />

@@ -7,7 +7,8 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { isClientView } from '../lib/roles'
 import { watchVehicles, profileCompany } from '../lib/vehicles'
-import { fleetStats, pmStats, formatDate } from '../lib/dummyData'
+import { watchAppointments, APPT_STATUS } from '../lib/appointments'
+import { fleetStats, pmStats, formatDate, formatDateTime } from '../lib/dummyData'
 import RoadworthyBadge from '../components/ui/RoadworthyBadge'
 import VehicleImage from '../components/ui/VehicleImage'
 import Icon from '../components/ui/Icon'
@@ -26,16 +27,48 @@ export default function MyFleet() {
 
   const clientVisibleOnly = isClientView(profile)
 
+  const [appointments, setAppointments] = useState([])
+
   useEffect(() => {
     if (!company) { setVehicles([]); setSource('no-company'); setLoading(false); return () => {} }
-    const unsub = watchVehicles(
+    const u1 = watchVehicles(
       { company, clientVisibleOnly },
       ({ vehicles, source, error, loading }) => {
         setVehicles(vehicles); setSource(source); setLoading(loading); setError(error)
       },
     )
-    return unsub
+    const u2 = watchAppointments({ dummyFallback: false }, ({ rows }) => setAppointments(rows))
+    return () => { u1?.(); u2?.() }
   }, [company, clientVisibleOnly])
+
+  // Enrich vehicles with booked schedule from active appointments
+  const BOOKED_STATUSES = new Set([
+    APPT_STATUS.PENDING_BOOKING, APPT_STATUS.PENDING_BRANCH_APPROVAL,
+    APPT_STATUS.BOOKED, APPT_STATUS.CONFIRMED, APPT_STATUS.TENTATIVE,
+    APPT_STATUS.ARRIVED, APPT_STATUS.ONGOING,
+  ])
+
+  const enrichedVehicles = useMemo(() => {
+    const apptByPlate = {}
+    for (const a of appointments) {
+      if (!BOOKED_STATUSES.has(a.status)) continue
+      if (company && a.company !== company) continue
+      const plate = (a.plateNo || '').toUpperCase()
+      if (!apptByPlate[plate] || (a.scheduledAt && !apptByPlate[plate].scheduledAt)) {
+        apptByPlate[plate] = a
+      }
+    }
+    return vehicles.map((v) => {
+      const appt = apptByPlate[(v.plateNo || '').toUpperCase()]
+      if (!appt) return v
+      return {
+        ...v,
+        bookedSchedule: appt.scheduledAt || null,
+        bookedBranch: appt.branch || null,
+        bookedStatus: appt.status || null,
+      }
+    })
+  }, [vehicles, appointments, company])
 
   if (!company) {
     return (
@@ -52,8 +85,8 @@ export default function MyFleet() {
     )
   }
 
-  const stats = useMemo(() => fleetStats(vehicles), [vehicles])
-  const pm = useMemo(() => pmStats(vehicles), [vehicles])
+  const stats = useMemo(() => fleetStats(enrichedVehicles), [enrichedVehicles])
+  const pm = useMemo(() => pmStats(enrichedVehicles), [enrichedVehicles])
 
   return (
     <div className="pb-20">
@@ -88,9 +121,9 @@ export default function MyFleet() {
         </div>
 
         {/* Mobile: card list. Desktop: keep the existing dense table. */}
-        <MobileList vehicles={vehicles} loading={loading} />
+        <MobileList vehicles={enrichedVehicles} loading={loading} />
         <div className="hidden lg:block">
-          <FleetTable vehicles={vehicles} loading={loading} />
+          <FleetTable vehicles={enrichedVehicles} loading={loading} />
         </div>
       </div>
     </div>
@@ -208,6 +241,32 @@ function VehicleCard({ vehicle }) {
             {formatDate(vehicle.nextPms) || '-'}
           </span>
         </div>
+        {vehicle.bookedStatus && (
+          <div className={`mt-1.5 flex items-center gap-1.5 text-[11px] rounded px-2 py-1 ${
+            vehicle.bookedStatus === 'CONFIRMED' || vehicle.bookedStatus === 'BOOKED'
+              ? 'text-green-700 bg-green-50'
+              : vehicle.bookedStatus === 'PENDING_BRANCH_APPROVAL'
+              ? 'text-amber-700 bg-amber-50'
+              : 'text-sky-700 bg-sky-50'
+          }`}>
+            <Icon name="calendar" className="w-3 h-3" />
+            {vehicle.bookedSchedule
+              ? <span>Booked: {formatDateTime(vehicle.bookedSchedule)}</span>
+              : <span>Awaiting schedule</span>}
+            {vehicle.bookedBranch && <span>· {vehicle.bookedBranch}</span>}
+            <span className={`font-bold px-1.5 py-0.5 rounded-full text-[9px] ml-auto ${
+              vehicle.bookedStatus === 'CONFIRMED' || vehicle.bookedStatus === 'BOOKED'
+                ? 'bg-green-200 text-green-800'
+                : vehicle.bookedStatus === 'PENDING_BRANCH_APPROVAL'
+                ? 'bg-amber-200 text-amber-800'
+                : 'bg-sky-200 text-sky-800'
+            }`}>
+              {vehicle.bookedStatus === 'CONFIRMED' || vehicle.bookedStatus === 'BOOKED' ? 'Approved'
+                : vehicle.bookedStatus === 'PENDING_BRANCH_APPROVAL' ? 'Pending Approval'
+                : 'Pending Schedule'}
+            </span>
+          </div>
+        )}
       </div>
     </Link>
   )
@@ -299,11 +358,27 @@ function FleetTable({ vehicles, loading }) {
                 <td className="px-4 py-2 whitespace-nowrap">{formatDate(v.nextPms)}</td>
                 <td className="px-4 py-2 whitespace-nowrap">
                   {v.bookedSchedule ? (
-                    <span className="inline-flex items-center gap-1 text-xs">
-                      <Icon name="calendar" className="w-4 h-4 text-green-600" />
-                      {formatDate(v.bookedSchedule)}
-                      {v.bookedBranch && <span className="text-gray-500 ml-1">({v.bookedBranch})</span>}
-                    </span>
+                    <div className="inline-flex flex-col gap-1">
+                      <span className="inline-flex items-center gap-1 text-xs">
+                        <Icon name="calendar" className={`w-4 h-4 ${v.bookedStatus === 'CONFIRMED' || v.bookedStatus === 'BOOKED' ? 'text-green-600' : 'text-amber-500'}`} />
+                        {formatDate(v.bookedSchedule)}
+                        {v.bookedBranch && <span className="text-gray-500 ml-1">({v.bookedBranch})</span>}
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full w-fit ${
+                        v.bookedStatus === 'CONFIRMED' || v.bookedStatus === 'BOOKED'
+                          ? 'bg-green-100 text-green-700'
+                          : v.bookedStatus === 'PENDING_BRANCH_APPROVAL'
+                          ? 'bg-amber-100 text-amber-700'
+                          : v.bookedStatus === 'PENDING_BOOKING'
+                          ? 'bg-sky-100 text-sky-700'
+                          : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {v.bookedStatus === 'CONFIRMED' || v.bookedStatus === 'BOOKED' ? 'Approved'
+                          : v.bookedStatus === 'PENDING_BRANCH_APPROVAL' ? 'Pending Approval'
+                          : v.bookedStatus === 'PENDING_BOOKING' ? 'Pending Schedule'
+                          : v.bookedStatus || '—'}
+                      </span>
+                    </div>
                   ) : '-'}
                 </td>
                 <td className="px-4 py-2 whitespace-nowrap"><RoadworthyBadge status={v.roadworthy} /></td>

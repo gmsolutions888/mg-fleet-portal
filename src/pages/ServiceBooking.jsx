@@ -2,17 +2,20 @@
 // createAppointment.
 
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { canReviewAtBranch } from '../lib/roles'
-import { BRANCHES, FLEET_COMPANIES } from '../lib/dummyData'
+import { canReviewAtBranch, canBookingRequests } from '../lib/roles'
+import { BRANCHES } from '../lib/dummyData'
+import { watchFleetCompanies } from '../lib/fleetCompanies'
 import { watchVehicles } from '../lib/vehicles'
+import { watchUsers } from '../lib/users'
 import {
   APPT_STATUS,
   watchAppointments, createAppointment, updateAppointmentStatus,
-  approveBookingAtBranch, rejectBookingAtBranch,
+  approveBookingAtBranch, rejectBookingAtBranch, assignMechanic,
 } from '../lib/appointments'
 import { PMS_ITEMS } from '../lib/mgfms-catalog'
+import { emitNotification } from '../lib/notifications'
 import SlidePanel from '../components/ui/SlidePanel'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
@@ -58,24 +61,53 @@ function composeScheduledAt(dateStr, timeSlot) {
 
 export default function ServiceBooking() {
   const { profile } = useAuth()
+  const [searchParams, setSearchParams] = useSearchParams()
   const branch = (profile?.branch || 'MGCAVITE').toUpperCase()
   const canReview = canReviewAtBranch(profile?.role) || profile?.is_admin
-  const [showPanel, setShowPanel] = useState(false)
+
+  // URL params from BookingRequests page — capture into state immediately
+  // so they survive the searchParams clear below.
+  const [urlPlate] = useState(() => searchParams.get('plate') || '')
+  const [urlCompany] = useState(() => searchParams.get('company') || '')
+  const [urlCustomer] = useState(() => searchParams.get('customer') || '')
+  const [urlRequestId] = useState(() => searchParams.get('requestId') || '')
+  const [urlNote] = useState(() => searchParams.get('note') || '')
+  const autoOpen = Boolean(urlPlate)
+
+  const [showPanel, setShowPanel] = useState(autoOpen)
   const [editId, setEditId] = useState(null)
   const [queueActing, setQueueActing] = useState(null)
   const [queueError, setQueueError] = useState(null)
   const today = new Date()
 
+  // Clear URL params after capturing so refreshing doesn't re-trigger
+  useEffect(() => {
+    if (autoOpen) {
+      setSearchParams({}, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const [appointments, setAppointments] = useState([])
   const [source, setSource] = useState('loading')
   const [vehicles, setVehicles] = useState([])
+  const [fleetCompanies, setFleetCompanies] = useState([])
+  const [allUsers, setAllUsers] = useState([])
+
+  const ASSESSOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
+  const assessors = useMemo(() => {
+    return allUsers
+      .filter((u) => ASSESSOR_ROLES.has(String(u.role || '').toLowerCase()) && u.is_active !== 0)
+      .map((u) => ({ id: u.id, name: u.name || u.email || '—', branch: u.branch || null }))
+  }, [allUsers])
 
   useEffect(() => {
     const u1 = watchAppointments({}, ({ rows, source }) => {
       setAppointments(rows); setSource(source)
     })
     const u2 = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
-    return () => { u1?.(); u2?.() }
+    const u3 = watchFleetCompanies((companies) => setFleetCompanies(companies))
+    const u4 = watchUsers((list) => setAllUsers(list))
+    return () => { u1?.(); u2?.(); u3?.(); u4?.() }
   }, [])
 
   const stats = useMemo(() => {
@@ -261,6 +293,13 @@ export default function ServiceBooking() {
           branch={branch}
           appointments={appointments}
           vehicles={vehicles}
+          fleetCompanies={fleetCompanies}
+          assessors={assessors}
+          prefillPlate={urlPlate}
+          prefillCompany={urlCompany}
+          prefillCustomer={urlCustomer}
+          prefillNote={urlNote}
+          requestId={urlRequestId}
           onClose={() => setShowPanel(false)}
         />
       </SlidePanel>
@@ -299,19 +338,58 @@ function BookingCard({ appt, onClick }) {
   )
 }
 
-function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
+function BookingForm({ editId, branch, appointments, vehicles, fleetCompanies, assessors, prefillPlate, prefillCompany, prefillCustomer, prefillNote, requestId, onClose }) {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const canReview = canReviewAtBranch(profile?.role) || profile?.is_admin
   const existing = editId ? appointments.find((a) => a.id === editId) : null
+
+  // Resolve a company value (could be code, name, or doc ID) to the dropdown value
+  const resolveCompanyValue = (val) => {
+    if (!val || fleetCompanies.length === 0) return val || ''
+    const v = String(val).toLowerCase().trim()
+    // Try exact match on code first
+    const byCode = fleetCompanies.find((c) => c.code?.toLowerCase() === v)
+    if (byCode) return byCode.code
+    // Try match on name
+    const byName = fleetCompanies.find((c) => c.name?.toLowerCase() === v)
+    if (byName) return byName.code
+    // Try match on doc ID
+    const byId = fleetCompanies.find((c) => c.id?.toLowerCase() === v)
+    if (byId) return byId.code
+    // Try partial match (company value contains or is contained in name)
+    const byPartial = fleetCompanies.find(
+      (c) => c.name?.toLowerCase().includes(v) || v.includes(c.name?.toLowerCase() || '')
+    )
+    if (byPartial) return byPartial.code
+    return val
+  }
+
+  const initCompany = existing?.company || prefillCompany || ''
+
   const [walkin, setWalkin] = useState(false)
   const [tentative, setTentative] = useState(false)
-  const [custType, setCustType] = useState(existing ? 'old' : 'new')
-  const [plate, setPlate] = useState(existing?.plateNo || '')
-  const [customer, setCustomer] = useState(existing?.customer || '')
+  const [custType, setCustType] = useState(existing ? 'old' : (initCompany ? 'fleet' : 'new'))
+  const [plate, setPlate] = useState(existing?.plateNo || prefillPlate || '')
+  const [customer, setCustomer] = useState(existing?.customer || prefillCustomer || '')
   const [mobile, setMobile] = useState(existing?.mobile || '')
-  const [company, setCompany] = useState(existing?.company || '')
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [company, setCompany] = useState(resolveCompanyValue(initCompany))
+
+  // Re-resolve when fleetCompanies load (they arrive async)
+  useEffect(() => {
+    if (fleetCompanies.length > 0 && initCompany && !fleetCompanies.find((c) => c.code === company)) {
+      const resolved = resolveCompanyValue(initCompany)
+      if (resolved !== company) setCompany(resolved)
+    }
+  }, [fleetCompanies]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Parse preferred date from fleet client note (e.g. "Preferred date: 2026-05-15")
+  const parsedPreferredDate = useMemo(() => {
+    if (!prefillNote) return null
+    const m = /Preferred date:\s*(\d{4}-\d{2}-\d{2})/.exec(prefillNote)
+    return m ? m[1] : null
+  }, [prefillNote])
+
+  const [date, setDate] = useState(parsedPreferredDate || new Date().toISOString().slice(0, 10))
   const [time, setTime] = useState('8:00 AM')
   const [services, setServices] = useState([])
   const [issues, setIssues] = useState([])
@@ -391,22 +469,71 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
       const submitStatus = isFleet
         ? APPT_STATUS.PENDING_BRANCH_APPROVAL
         : (tentative ? APPT_STATUS.TENTATIVE : APPT_STATUS.BOOKED)
-      await createAppointment({
-        plateNo: plate,
-        customer,
-        customerType: custType,
-        mobile,
-        company: isFleet ? company : null,
-        branch,
-        scheduledAt: composeScheduledAt(date, time),
-        scheduledTime: time,
-        servicesInterested: services,
-        customerIssues: issues,
-        tentative,
-        walkin,
-        status: submitStatus,
-        note: 'SERVICE BOOKED',
-      })
+      // If booking from a fleet client request (requestId), update the
+      // existing appointment instead of creating a new one.
+      if (requestId) {
+        await updateAppointmentStatus(requestId, submitStatus, 'Booked by call center')
+        // Also update the appointment with the schedule and branch details
+        const { doc: firestoreDoc, updateDoc: firestoreUpdate, serverTimestamp: srvTs } = await import('firebase/firestore')
+        const { db, auth: fbAuth } = await import('../lib/firebase')
+        await firestoreUpdate(firestoreDoc(db, 'appointments', requestId), {
+          branch,
+          scheduledAt: composeScheduledAt(date, time),
+          scheduledTime: time,
+          servicesInterested: services,
+          customerIssues: issues,
+          status: submitStatus,
+          walkin,
+          note: 'SERVICE BOOKED',
+          updatedAt: srvTs(),
+          updatedBy: fbAuth?.currentUser?.uid || null,
+        })
+
+        // Notify fleet client — use the original company value from the
+        // appointment so it matches the fleet client's profile.company_id query.
+        const fleetCompany = initCompany || company || null
+        emitNotification({
+          kind: 'booking',
+          title: `Booking scheduled — ${plate}`,
+          body: `Your vehicle ${plate} has been scheduled for ${date} at ${time} · ${branch}`,
+          plateNo: plate,
+          appointmentId: requestId,
+          link: '/portal/schedule-service',
+          branch: null,
+          company: fleetCompany,
+          target_roles: ['fleet_client', 'fleet_client_manager'],
+        })
+
+        // Notify branch — new booking awaiting approval
+        emitNotification({
+          kind: 'booking',
+          title: `New fleet booking — ${plate}`,
+          body: `${customer || 'Fleet client'} · ${date} at ${time} · pending branch approval`,
+          plateNo: plate,
+          appointmentId: requestId,
+          link: '/appointments',
+          branch: branch,
+          company: null,
+          target_roles: ['admin_supervisor', 'operations_manager'],
+        })
+      } else {
+        await createAppointment({
+          plateNo: plate,
+          customer,
+          customerType: custType,
+          mobile,
+          company: isFleet ? company : null,
+          branch,
+          scheduledAt: composeScheduledAt(date, time),
+          scheduledTime: time,
+          servicesInterested: services,
+          customerIssues: issues,
+          tentative,
+          walkin,
+          status: submitStatus,
+          note: 'SERVICE BOOKED',
+        })
+      }
       onClose()
     } catch (err) {
       console.error('[booking] createAppointment failed', err)
@@ -476,6 +603,11 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
         </div>
       )}
 
+      {/* Assign Mechanic — visible when editing, for fleet manager, call center, branch users */}
+      {existing && existing.status !== APPT_STATUS.PENDING_BRANCH_APPROVAL && existing.status !== APPT_STATUS.PENDING_BOOKING && (
+        <MechanicAssign appointmentId={editId} current={existing.mechanic} bookingBranch={existing.branch || branch} assessors={assessors} />
+      )}
+
       <Row label="Service Center">
         <select value={branch} disabled className="input">
           {BRANCHES.map((b) => <option key={b}>{b}</option>)}
@@ -493,6 +625,16 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
             {TIME_SLOTS.map((t) => <option key={t}>{t}</option>)}
           </select>
         </div>
+        {parsedPreferredDate && (
+          <div className="mt-2 bg-sky-50 border border-sky-200 text-sky-900 text-xs rounded px-2 py-1.5">
+            Client requested: <strong>{parsedPreferredDate}</strong>
+          </div>
+        )}
+        {prefillNote && !parsedPreferredDate && prefillNote !== 'BOOKING REQUESTED BY FLEET CLIENT' && (
+          <div className="mt-2 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded px-2 py-1.5">
+            Client preference: <strong>{prefillNote}</strong>
+          </div>
+        )}
         <label className="flex items-center gap-1.5 mt-2 text-xs">
           <input type="checkbox" checked={tentative} onChange={(e) => setTentative(e.target.checked)} />
           Tentative
@@ -540,7 +682,7 @@ function BookingForm({ editId, branch, appointments, vehicles, onClose }) {
         <Row label="Fleet Company">
           <select value={company} onChange={(e) => setCompany(e.target.value)} className="input w-full" required>
             <option value="">— select —</option>
-            {FLEET_COMPANIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+            {fleetCompanies.map((c) => <option key={c.id} value={c.code}>{c.name}</option>)}
           </select>
         </Row>
       )}
@@ -656,6 +798,72 @@ function Row({ label, children }) {
     <div>
       <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
       {children}
+    </div>
+  )
+}
+
+function MechanicAssign({ appointmentId, current, bookingBranch, assessors }) {
+  const { profile } = useAuth()
+  const canAssign = canReviewAtBranch(profile?.role) || canBookingRequests(profile?.role)
+  const [selectedMechanic, setSelectedMechanic] = useState(current && current !== 'Not yet assigned' ? current : '')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  // Filter assessors to the booking's branch
+  const branchAssessors = useMemo(() => {
+    if (!bookingBranch) return assessors
+    const target = bookingBranch.toUpperCase().trim()
+    return assessors.filter((a) => (a.branch || '').toUpperCase().trim() === target)
+  }, [assessors, bookingBranch])
+
+  if (!canAssign) return null
+
+  const hasMechanic = current && current !== 'Not yet assigned'
+
+  const handleAssign = async () => {
+    if (!selectedMechanic || !appointmentId || saving) return
+    setSaving(true); setSaved(false)
+    try {
+      await assignMechanic(appointmentId, selectedMechanic)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } catch (err) {
+      console.error('[booking] assign mechanic failed:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-md p-3 space-y-2">
+      <div className="text-[11px] font-bold uppercase tracking-wider text-blue-700">
+        {hasMechanic ? 'Assigned Mechanic' : 'Assign Mechanic'}
+      </div>
+      <div className="flex gap-2">
+        <select
+          value={selectedMechanic}
+          onChange={(e) => setSelectedMechanic(e.target.value)}
+          className="input flex-1 text-sm"
+        >
+          <option value="">— select assessor —</option>
+          {branchAssessors.map((a) => (
+            <option key={a.id} value={a.name}>
+              {a.name}{a.branch ? ` (${a.branch})` : ''}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={handleAssign}
+          disabled={!selectedMechanic || saving || selectedMechanic === current}
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 rounded shrink-0"
+        >
+          {saving ? 'Saving…' : hasMechanic ? 'Reassign' : 'Assign'}
+        </button>
+      </div>
+      {saved && (
+        <div className="text-[11px] text-green-700 font-semibold">Mechanic assigned successfully.</div>
+      )}
     </div>
   )
 }

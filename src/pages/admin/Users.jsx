@@ -44,9 +44,45 @@ export default function Users() {
     return () => { uu?.(); uc?.() }
   }, [])
 
+  const [userFilter, setUserFilter] = useState('ALL')
+  const [companyFilter, setCompanyFilter] = useState('')
+
   const filteredUsers = useMemo(() => {
-    return [...users].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    const sorted = [...users].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    if (userFilter === 'ALL') return sorted
+    if (userFilter === 'INTERNAL') {
+      return sorted.filter((u) => {
+        const info = ROLE_REGISTRY[u.role]
+        return info?.category === 'internal' && !u.branch
+      })
+    }
+    if (userFilter === 'FLEET_COMPANY') {
+      const customerUsers = sorted.filter((u) => ROLE_REGISTRY[u.role]?.category === 'customer')
+      if (!companyFilter) return customerUsers
+      return customerUsers.filter((u) => {
+        const uc = (u.company_id || u.company || '').toLowerCase().trim()
+        const cf = companyFilter.toLowerCase().trim()
+        return uc === cf || uc.includes(cf) || cf.includes(uc)
+      })
+    }
+    // Filter by specific branch
+    return sorted.filter((u) => (u.branch || '').toUpperCase() === userFilter)
+  }, [users, userFilter, companyFilter])
+
+  // Get unique branches for the filter
+  const branches = useMemo(() => {
+    const set = new Set()
+    for (const u of users) {
+      if (u.branch) set.add(u.branch.toUpperCase())
+    }
+    return [...set].sort()
   }, [users])
+
+  const filterCounts = useMemo(() => ({
+    ALL: users.length,
+    INTERNAL: users.filter((u) => ROLE_REGISTRY[u.role]?.category === 'internal' && !u.branch).length,
+    FLEET_COMPANY: users.filter((u) => ROLE_REGISTRY[u.role]?.category === 'customer').length,
+  }), [users])
 
   const openInvite = () => {
     setForm(emptyForm())
@@ -139,6 +175,49 @@ export default function Users() {
       />
 
       <div className="px-3 sm:px-6 pt-4 space-y-4">
+        {/* Filter tabs */}
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {[
+            { key: 'ALL', label: 'All' },
+            { key: 'FLEET_COMPANY', label: 'Fleet Company' },
+            { key: 'INTERNAL', label: 'Fleet Internal Users' },
+            ...branches.map((b) => ({ key: b, label: b })),
+          ].map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => { setUserFilter(t.key); if (t.key !== 'FLEET_COMPANY') setCompanyFilter('') }}
+              className={`shrink-0 text-xs font-bold px-3 py-2 rounded-full whitespace-nowrap transition-colors ${
+                userFilter === t.key
+                  ? 'bg-brand text-white'
+                  : 'bg-white border text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {t.label}
+              {filterCounts[t.key] != null && (
+                <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full ${
+                  userFilter === t.key ? 'bg-white/20' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {filterCounts[t.key]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {userFilter === 'FLEET_COMPANY' && (
+          <select
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            className="input text-sm max-w-xs"
+          >
+            <option value="">All Fleet Companies</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.name}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+            ))}
+          </select>
+        )}
+
         {mode === null && (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <p className="text-gray-600 text-xs sm:text-sm">

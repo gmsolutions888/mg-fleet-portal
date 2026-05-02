@@ -6,10 +6,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { watchAppointments, assignMechanic } from '../lib/appointments'
-import { MECHANICS } from '../lib/dummyData'
+import { watchUsers } from '../lib/users'
 import PageHero from '../components/ui/PageHero'
 import Icon from '../components/ui/Icon'
 import StatusPill from '../components/ui/StatusPill'
+
+const ASSESSOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
 
 export default function AssignMechanic() {
   const { id } = useParams()
@@ -24,19 +26,20 @@ export default function AssignMechanic() {
   }
 
   const [rows, setRows] = useState([])
+  const [users, setUsers] = useState([])
   const [search, setSearch] = useState('')
-  const [saving, setSaving] = useState(null) // mechanic name currently being written
+  const [saving, setSaving] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const unsub = watchAppointments({}, ({ rows }) => setRows(rows))
-    return unsub
+    const u1 = watchAppointments({}, ({ rows }) => setRows(rows))
+    const u2 = watchUsers((list) => setUsers(list))
+    return () => { u1?.(); u2?.() }
   }, [])
 
   const appt = useMemo(() => rows.find((a) => a.id === id) || null, [rows, id])
 
-  // Workload per mechanic — counts all non-completed appointments assigned to
-  // that mechanic across the fleet. Helps the picker surface idle techs.
+  // Look up users with assessor/warrior roles and compute workload
   const mechanics = useMemo(() => {
     const term = search.trim().toLowerCase()
     const activeStatuses = new Set(['BOOKED', 'CONFIRMED', 'ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
@@ -46,14 +49,18 @@ export default function AssignMechanic() {
       if (!activeStatuses.has(a.status)) continue
       load.set(a.mechanic, (load.get(a.mechanic) || 0) + 1)
     }
-    const out = MECHANICS.map((m) => ({
-      ...m,
-      workload: load.get(m.name) || 0,
-    }))
+    const assessors = users
+      .filter((u) => ASSESSOR_ROLES.has(String(u.role || '').toLowerCase()) && u.is_active !== 0)
+      .map((u) => ({
+        id: u.id,
+        name: u.name || u.email || '—',
+        branch: u.branch || null,
+        workload: load.get(u.name) || 0,
+      }))
     return term
-      ? out.filter((m) => m.name.toLowerCase().includes(term))
-      : out
-  }, [rows, search])
+      ? assessors.filter((m) => m.name.toLowerCase().includes(term))
+      : assessors
+  }, [rows, users, search])
 
   const currentName = appt?.mechanic && appt.mechanic !== 'Not yet assigned' ? appt.mechanic : null
 
@@ -176,6 +183,7 @@ export default function AssignMechanic() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm text-gray-900 truncate">{m.name}</div>
+                  {m.branch && <div className="text-[10px] text-gray-400">{m.branch}</div>}
                   <div className="text-[11px] text-gray-500 mt-0.5">
                     {m.workload > 0 ? (
                       <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">

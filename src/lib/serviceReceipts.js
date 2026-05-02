@@ -80,7 +80,7 @@ export const QUOT_STATUS_LABELS = Object.freeze({
 const ALLOWED_NEXT = Object.freeze({
   [QUOT_STATUS.DRAFT]:                [QUOT_STATUS.FOR_MG_FLEET_REVIEW],
   [QUOT_STATUS.FOR_MG_FLEET_REVIEW]:  [QUOT_STATUS.FOR_CLIENT_REVIEW, QUOT_STATUS.DRAFT],
-  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.DRAFT],
+  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.DRAFT, QUOT_STATUS.FOR_MG_FLEET_REVIEW],
   [QUOT_STATUS.CLIENT_CLARIFICATION]: [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.CLIENT_REJECTED]:      [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.APPROVED_FINAL]:       [],
@@ -124,30 +124,32 @@ export function availableQuotationActions(quot, profile) {
   const push = (key, label, nextStatus, tone = 'primary', requiresText = false) =>
     out.push({ key, label, nextStatus, tone, requiresText })
 
+  const isMgFleetMgr = actor === 'mg_fleet_manager'
+
   if (status === QUOT_STATUS.DRAFT) {
-    if (isAdminEscape || actor === 'admin_supervisor' || actor === 'mg_fleet_manager') {
+    // Only branch users can forward to MG Fleet — never fleet manager
+    if (actor === 'admin_supervisor') {
       push(QUOT_ACTION.FORWARD_TO_MGFLEET, 'Forward to MG Fleet', QUOT_STATUS.FOR_MG_FLEET_REVIEW)
     }
   } else if (status === QUOT_STATUS.FOR_MG_FLEET_REVIEW) {
-    if (isAdminEscape || actor === 'mg_fleet_manager') {
+    if (isMgFleetMgr) {
       push(QUOT_ACTION.FORWARD_TO_CLIENT, 'Forward to client', QUOT_STATUS.FOR_CLIENT_REVIEW)
       push(QUOT_ACTION.BOUNCE_TO_SUPERVISOR, 'Bounce back to supervisor', QUOT_STATUS.DRAFT, 'ghost', true)
     }
   } else if (status === QUOT_STATUS.FOR_CLIENT_REVIEW) {
-    if (isAdminEscape || actor === 'fleet_client') {
+    // Only fleet_client_manager can approve/reject/clarify
+    const isClientManager = canApproveQuotations(profile.role)
+    if (isClientManager) {
       push(QUOT_ACTION.CLIENT_APPROVE, 'Approve', QUOT_STATUS.APPROVED_FINAL, 'primary')
       push(QUOT_ACTION.CLIENT_REJECT, 'Reject', QUOT_STATUS.CLIENT_REJECTED, 'danger', true)
-      // Clarification bounces straight to DRAFT — supervisor owns the edit.
-      push(QUOT_ACTION.CLIENT_CLARIFY, 'Request clarification', QUOT_STATUS.DRAFT, 'ghost', true)
+      push(QUOT_ACTION.CLIENT_CLARIFY, 'Request clarification', QUOT_STATUS.FOR_MG_FLEET_REVIEW, 'ghost', true)
     }
   } else if (status === QUOT_STATUS.CLIENT_CLARIFICATION) {
-    // Legacy holding status — any pre-existing doc stuck here can be
-    // re-opened so the supervisor can address the comment and resubmit.
-    if (isAdminEscape || actor === 'admin_supervisor' || actor === 'mg_fleet_manager') {
+    if (isMgFleetMgr || actor === 'admin_supervisor') {
       push(QUOT_ACTION.REOPEN_TO_DRAFT, 'Re-open as draft to address', QUOT_STATUS.DRAFT)
     }
   } else if (status === QUOT_STATUS.CLIENT_REJECTED) {
-    if (isAdminEscape || actor === 'admin_supervisor' || actor === 'mg_fleet_manager') {
+    if (isMgFleetMgr || actor === 'admin_supervisor') {
       push(QUOT_ACTION.REOPEN_TO_DRAFT, 'Re-open as draft', QUOT_STATUS.DRAFT, 'ghost')
     }
   }
@@ -267,16 +269,29 @@ export async function transitionQuotation(id, { action, nextStatus, text, byProf
       kind: 'approval',
       title: `Quotation ${code} forwarded for MG Fleet review`,
       body: `${plate} · awaiting ${byRole === 'admin_supervisor' ? 'MG Fleet manager' : 'review'}`.trim(),
-      company: null, // admin-audience only at this hop
+      company: null,
+      target_roles: ['general_manager'],
     })
   } else if (action === QUOT_ACTION.FORWARD_TO_CLIENT) {
-    emitNotification({
-      ...notifBase,
-      kind: 'approval',
-      title: `Quotation ${code} — awaiting your approval`,
-      body: `${plate} · forwarded by MG Fleet`,
-      company: quot.company || null, // target the client
-    })
+    // Emit notification for each possible company identifier so it matches
+    // the fleet client's profile.company_id regardless of format.
+    const companyValues = new Set()
+    if (quot.company) companyValues.add(quot.company)
+    if (quot.customer) companyValues.add(quot.customer)
+    // Always emit at least one notification
+    if (companyValues.size === 0) companyValues.add(null)
+    for (const companyVal of companyValues) {
+      emitNotification({
+        ...notifBase,
+        kind: 'approval',
+        title: `Quotation ${code} — awaiting your approval`,
+        body: `${plate} · forwarded by MG Fleet for your review`,
+        link: `/service-receipts/${code}`,
+        branch: null,
+        company: companyVal,
+        target_roles: ['fleet_client', 'fleet_client_manager'],
+      })
+    }
   } else if (action === QUOT_ACTION.BOUNCE_TO_SUPERVISOR) {
     emitNotification({
       ...notifBase,
@@ -284,6 +299,7 @@ export async function transitionQuotation(id, { action, nextStatus, text, byProf
       title: `Quotation ${code} returned for revision`,
       body: note || 'MG Fleet requested changes',
       company: null,
+      target_roles: ['admin_supervisor', 'admin_assistance', 'operations_manager'],
     })
   } else if (action === QUOT_ACTION.CLIENT_APPROVE) {
     emitNotification({
@@ -302,20 +318,25 @@ export async function transitionQuotation(id, { action, nextStatus, text, byProf
       company: null,
     })
   } else if (action === QUOT_ACTION.CLIENT_CLARIFY) {
+    // Notify fleet manager — quotation goes back to MG Fleet review
     emitNotification({
       ...notifBase,
       kind: 'approval',
       title: `Client requested clarification — ${code}`,
       body: note || 'See comment thread.',
-      company: null, // alert MG Fleet + supervisor
+      branch: null,
+      company: null,
+      target_roles: ['general_manager'],
     })
   } else if (action === QUOT_ACTION.REOPEN_TO_DRAFT) {
+    // Notify branch users — quotation re-opened for revision
     emitNotification({
       ...notifBase,
       kind: 'approval',
       title: `Quotation ${code} re-opened as draft`,
-      body: `${plate} · ready for supervisor revision`,
+      body: `${plate} · ${note || 'ready for supervisor revision'}`,
       company: null,
+      target_roles: ['admin_supervisor', 'admin_assistance', 'operations_manager'],
     })
   }
 
@@ -783,6 +804,7 @@ export async function createReceipt(kind, data) {
     // Receipts notify the fleet client directly; quotations stay internal
     // until forwarded through the chain.
     company: kind === 'quotation' ? null : (fleet ? data.company : null),
+    target_roles: kind === 'quotation' ? ['admin_supervisor', 'admin_assistance'] : null,
   })
   return { id: ref.id, code }
 }

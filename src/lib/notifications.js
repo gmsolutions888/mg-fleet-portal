@@ -17,24 +17,32 @@ import {
 import { auth, db } from './firebase'
 import { isCustomer } from './roles'
 
+const WARRIOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
+
 const COLLECTION = 'notifications'
 const LIST_LIMIT = 50
 
+// Queries use single-field where() only — no composite indexes required.
+// Sorting + limiting is done client-side in watchNotifications.
 function audienceQuery(profile) {
   const base = collection(db, COLLECTION)
-  if (profile?.is_admin) {
+  const role = String(profile?.role || '').toLowerCase().trim()
+  if (profile?.is_admin || role === 'general_manager' || role === 'finance' || role === 'finance_head') {
     return query(base, orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
   }
-  if (isCustomer(profile?.role) && profile?.company_id) {
-    return query(base, where('company', '==', profile.company_id), orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
+  // Fleet clients — fetch all notifications with a company field set,
+  // then filter client-side for flexible company matching.
+  if (isCustomer(role)) {
+    return { _customerFilter: true, base }
+  }
+  if (role === 'call_center') {
+    return query(base, where('kind', '==', 'booking'))
   }
   if (profile?.branch) {
-    return query(base, where('branch', '==', profile.branch), orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
+    return query(base, where('branch', '==', profile.branch))
   }
-  // Internal users without a branch (e.g. call_center) only see booking
-  // request notifications — they don't need branch-scoped ops notifications.
-  if (!isCustomer(profile?.role)) {
-    return query(base, where('kind', '==', 'booking'), orderBy('createdAt', 'desc'), limit(LIST_LIMIT))
+  if (!isCustomer(role)) {
+    return query(base, where('kind', '==', 'booking'))
   }
   return null
 }
@@ -49,6 +57,109 @@ export function watchNotifications(profile, cb) {
     cb({ rows: [], loading: false, error: null, source: 'no-audience' })
     return () => {}
   }
+
+  const role = String(profile?.role || '').toLowerCase().trim()
+  const isWarrior = WARRIOR_ROLES.has(role)
+
+  // Fleet client — fetch all, filter client-side by company (flexible match)
+  if (q._customerFilter) {
+    const companyId = (profile?.company_id || profile?.company || '').toLowerCase().trim()
+    return onSnapshot(
+      query(q.base),
+      (snap) => {
+        const uid = auth?.currentUser?.uid
+        const rows = snap.docs
+          .map((d) => {
+            const data = { id: d.id, ...d.data() }
+            data.read = uid ? (Array.isArray(data.readBy) && data.readBy.includes(uid)) : false
+            return data
+          })
+          .filter((n) => {
+            if (!n.company) return false
+            const nc = n.company.toLowerCase().trim()
+            return nc === companyId || nc.includes(companyId) || companyId.includes(nc)
+          })
+        rows.sort((a, b) => {
+          const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0
+          const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0
+          return tb - ta
+        })
+        cb({ rows: rows.slice(0, LIST_LIMIT), loading: false, error: null, source: 'firestore' })
+      },
+      (err) => {
+        console.warn('[notifications] listener error:', err)
+        cb({ rows: [], loading: false, error: err, source: 'error' })
+      },
+    )
+  }
+
+  // Warriors need to cross-reference with their assigned appointments
+  // to filter notifications to only their vehicles.
+  if (isWarrior) {
+    let notifRows = []
+    let assignedPlates = new Set()
+    let assignedIds = new Set()
+    let readyN = false
+    let readyA = false
+
+    const emitFiltered = () => {
+      if (!readyN || !readyA) return
+      const uid = auth?.currentUser?.uid
+      const filtered = notifRows.filter((n) => {
+        // Show if the notification is about a vehicle assigned to this warrior
+        if (n.plateNo && assignedPlates.has(n.plateNo.toUpperCase())) return true
+        // Show if the notification references an appointment assigned to them
+        if (n.appointmentId && assignedIds.has(n.appointmentId)) return true
+        // Show if the notification was created by this user
+        if (uid && n.createdBy === uid) return true
+        return false
+      })
+      filtered.sort((a, b) => {
+        const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0
+        const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0
+        return tb - ta
+      })
+      cb({ rows: filtered.slice(0, LIST_LIMIT), loading: false, error: null, source: 'firestore' })
+    }
+
+    const unsubN = onSnapshot(q, (snap) => {
+      const uid = auth?.currentUser?.uid
+      notifRows = snap.docs.map((d) => {
+        const data = { id: d.id, ...d.data() }
+        data.read = uid ? (Array.isArray(data.readBy) && data.readBy.includes(uid)) : false
+        return data
+      })
+      readyN = true
+      emitFiltered()
+    }, (err) => {
+      console.warn('[notifications] listener error:', err)
+      cb({ rows: [], loading: false, error: err, source: 'error' })
+    })
+
+    // Watch appointments to know which plates/IDs are assigned to this warrior
+    const mechanicName = (profile.name || '').toLowerCase().trim()
+    const uid = auth?.currentUser?.uid
+    const unsubA = onSnapshot(collection(db, 'appointments'), (snap) => {
+      const plates = new Set()
+      const ids = new Set()
+      for (const d of snap.docs) {
+        const a = d.data()
+        const mech = (a.mechanic || '').toLowerCase().trim()
+        if (mech === mechanicName || a.createdBy === uid) {
+          plates.add((a.plateNo || '').toUpperCase())
+          ids.add(d.id)
+        }
+      }
+      assignedPlates = plates
+      assignedIds = ids
+      readyA = true
+      emitFiltered()
+    })
+
+    return () => { unsubN(); unsubA() }
+  }
+
+  // Non-warrior roles — standard notification feed
   return onSnapshot(
     q,
     (snap) => {
@@ -58,7 +169,13 @@ export function watchNotifications(profile, cb) {
         data.read = uid ? (Array.isArray(data.readBy) && data.readBy.includes(uid)) : false
         return data
       })
-      cb({ rows, loading: false, error: null, source: 'firestore' })
+      // Sort by createdAt descending and limit client-side
+      rows.sort((a, b) => {
+        const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+        const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+        return tb - ta
+      })
+      cb({ rows: rows.slice(0, LIST_LIMIT), loading: false, error: null, source: 'firestore' })
     },
     (err) => {
       console.warn('[notifications] listener error:', err)

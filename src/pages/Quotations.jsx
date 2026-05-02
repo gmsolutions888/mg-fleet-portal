@@ -44,6 +44,17 @@ const STAFF_TABS = [
   { key: 'ALL',                         label: 'All' },
 ]
 
+// Fleet Manager sees everything except Draft and Unbilled
+const FLEET_MGR_TABS = [
+  { key: 'ALL',                            label: 'All' },
+  { key: 'NEEDS_ACTION',                   label: 'Needs action' },
+  { key: QUOT_STATUS.FOR_MG_FLEET_REVIEW,  label: 'MG Fleet' },
+  { key: QUOT_STATUS.FOR_CLIENT_REVIEW,    label: 'Client' },
+  { key: QUOT_STATUS.CLIENT_CLARIFICATION, label: 'Clarify' },
+  { key: QUOT_STATUS.APPROVED_FINAL,       label: 'Approved' },
+  { key: QUOT_STATUS.CLIENT_REJECTED,      label: 'Rejected' },
+]
+
 const CUSTOMER_TABS = [
   { key: QUOT_STATUS.FOR_CLIENT_REVIEW,    label: 'For review' },
   { key: QUOT_STATUS.CLIENT_CLARIFICATION, label: 'Clarifying' },
@@ -55,29 +66,42 @@ const CUSTOMER_TABS = [
 export default function Quotations({ unbilledOnly = false, customerView: customerViewProp }) {
   const { profile } = useAuth()
   const customerView = customerViewProp ?? isCustomer(profile?.role)
+  const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
   const companyFilter = customerView ? (profileCompany(profile) || '').toString() : null
 
   const [rows, setRows] = useState([])
   const [source, setSource] = useState('loading')
   const [search, setSearch] = useState('')
-  const [statusTab, setStatusTab] = useState(customerView ? QUOT_STATUS.FOR_CLIENT_REVIEW : 'NEEDS_ACTION')
+  const [statusTab, setStatusTab] = useState(
+    customerView ? QUOT_STATUS.FOR_CLIENT_REVIEW : 'NEEDS_ACTION'
+  )
   const [busy, setBusy] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     const opts = { kind: 'quotation' }
-    if (companyFilter) opts.company = companyFilter
+    // Don't filter by company in the query — do it client-side to handle
+    // mismatches between profile.company_id and quotation.company values.
     const unsub = watchReceipts(opts, ({ rows, source }) => {
       setRows(rows); setSource(source)
     })
     return unsub
   }, [companyFilter, customerView])
 
-  // Apply customer visibility filter once, then filter UI the rest downstream.
+  // Apply visibility filter — customers see limited statuses, fleet manager skips drafts.
   const visible = useMemo(() => {
+    if (isFleetMgr) return rows.filter((r) => effectiveQuotationStatus(r) !== QUOT_STATUS.DRAFT)
     if (!customerView) return rows
-    return rows.filter((r) => CUSTOMER_STATUSES.has(effectiveQuotationStatus(r)))
-  }, [rows, customerView])
+    // Customer view: filter by status + match company flexibly
+    const cf = companyFilter ? companyFilter.toLowerCase().trim() : null
+    return rows.filter((r) => {
+      if (!CUSTOMER_STATUSES.has(effectiveQuotationStatus(r))) return false
+      if (!cf) return true
+      const rc = (r.company || '').toLowerCase().trim()
+      // Match by exact, contains, or partial
+      return rc === cf || rc.includes(cf) || cf.includes(rc)
+    })
+  }, [rows, customerView, companyFilter])
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -120,7 +144,7 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
     return c
   }, [visible, profile])
 
-  const tabs = customerView ? CUSTOMER_TABS : STAFF_TABS
+  const tabs = customerView ? CUSTOMER_TABS : isFleetMgr ? FLEET_MGR_TABS : STAFF_TABS
 
   const runAction = async (q, action) => {
     if (!q.id || busy) return
@@ -279,15 +303,14 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
         </div>
       </div>
 
-      {!customerView && (
+      {!customerView && !isFleetMgr && (
         <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-20">
           <Link
-            to="/appointments"
+            to="/quotations/create"
             className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl"
-            title="Quotations start from a booking → assessment. This takes you to the Bookings list."
           >
             <Icon name="plus" className="w-4 h-4" />
-            New from Booking
+            Create Quotation
           </Link>
         </div>
       )}

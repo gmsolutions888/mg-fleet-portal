@@ -3,8 +3,11 @@
 // falling back to dummy when the collections are empty.
 
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { canAssess, canReviewAtBranch, canBookingRequests } from '../lib/roles'
+
+const WARRIOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
 import { formatDateTime } from '../lib/dummyData'
 import { watchAppointments } from '../lib/appointments'
 import { watchVehicles } from '../lib/vehicles'
@@ -59,16 +62,27 @@ export default function Home() {
     return () => { u1?.(); u2?.() }
   }, [])
 
-  const appointments = useMemo(() => raw.map((a) => {
-    const v = vehicles.find((x) => x.plateNo === a.plateNo)
-    return {
-      ...a,
-      brandModel: v?.brandModel || '',
-      model: v?.model || '',
-      yearModel: v?.yearModel || '',
-      company: a.company || v?.company || '',
+  const role = String(profile?.role || '').toLowerCase().trim()
+  const isWarrior = WARRIOR_ROLES.has(role)
+  const myName = (profile?.name || '').toLowerCase().trim()
+
+  const appointments = useMemo(() => {
+    const enriched = raw.map((a) => {
+      const v = vehicles.find((x) => x.plateNo === a.plateNo)
+      return {
+        ...a,
+        brandModel: v?.brandModel || '',
+        model: v?.model || '',
+        yearModel: v?.yearModel || '',
+        company: a.company || v?.company || '',
+      }
+    })
+    // Warriors only see vehicles assigned to them
+    if (isWarrior && myName) {
+      return enriched.filter((a) => (a.mechanic || '').toLowerCase().trim() === myName)
     }
-  }), [raw, vehicles])
+    return enriched
+  }, [raw, vehicles, isWarrior, myName])
 
   // CONFIRMED is what fleet bookings flip to after branch approval; it's
   // functionally identical to BOOKED (scheduled, awaiting arrival), so we
@@ -128,7 +142,9 @@ export default function Home() {
       </div>
 
       <div className="px-3 sm:px-6 pt-5 space-y-4">
-        <FinanceSnapshot profile={profile} />
+        {(String(profile?.role || '').toLowerCase() === 'finance' || String(profile?.role || '').toLowerCase() === 'finance_head') && (
+          <FinanceSnapshot profile={profile} />
+        )}
 
         {/* Pipeline row — color-coded counts */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
@@ -223,22 +239,33 @@ function CardView({ byStatus, filter }) {
 }
 
 function AppointmentCard({ appt }) {
-  // Mechanic assignment is part of the assessment flow now (Round 16). If a
-  // mechanic isn't picked yet, route the user through AssignMechanic first
-  // so they can pick one, then on save it bounces them into /assess.
+  const { profile } = useAuth()
+  const role = profile?.role
+  const showAssess = canAssess(role)
+  const canAssign = canReviewAtBranch(role) || canBookingRequests(role)
+  const isPending = appt.status === 'PENDING_BRANCH_APPROVAL' || appt.status === 'PENDING_BOOKING'
+
   const hasMechanic = appt.mechanic && appt.mechanic !== 'Not yet assigned'
   const assessHref = hasMechanic
     ? `/appointments/${appt.id}/assess`
     : `/appointments/${appt.id}/assign?then=assess`
+  const assignHref = `/appointments/${appt.id}/assign`
+
+  const navigate = useNavigate()
+
+  const handleCardClick = () => {
+    if (canAssign && !isPending) navigate(assignHref)
+    else navigate(`/vehicles/${appt.plateNo}`)
+  }
 
   return (
-    <div className="bg-white border rounded-2xl p-2.5 shadow-sm">
+    <div className="bg-white border rounded-2xl p-2.5 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={handleCardClick}>
       <div className="h-16 flex items-center justify-center mb-1">
         <VehicleImage model={appt.model} className="max-h-16 object-contain" />
       </div>
-      <Link to={`/vehicles/${appt.plateNo}`} className="block text-sm font-black text-gray-900 hover:text-brand tracking-wide">
+      <div className="text-sm font-black text-gray-900 tracking-wide">
         {appt.plateNo}
-      </Link>
+      </div>
       {appt.company && <div className="text-[10px] text-brand font-bold truncate">{appt.company}</div>}
       <div className="text-[10px] text-gray-500 truncate">
         {(appt.brandModel || '').replace('Toyota - ', '')} {appt.yearModel}
@@ -254,23 +281,26 @@ function AppointmentCard({ appt }) {
         <Icon name="user" className="w-3 h-3 text-gray-500" />
         <span className="uppercase truncate">{appt.customer}</span>
       </div>
-      {appt.mechanic && appt.mechanic !== 'Not yet assigned' ? (
+      {hasMechanic ? (
         <div className="flex items-center gap-1 text-[10px] text-gray-600">
           <Icon name="tool" className="w-3 h-3 text-gray-500" />
           <span className="uppercase truncate">{appt.mechanic}</span>
         </div>
       ) : (
-        <div className="text-[10px] text-gray-400 italic">Not yet assigned</div>
+        <div className="text-[10px] text-amber-600 font-semibold italic">Not yet assigned</div>
       )}
       <div className="mt-2 text-[10px] text-gray-600 bg-gray-50 rounded-lg px-2 py-1 leading-tight">
         {appt.note ? `"${appt.note}"` : '-'}
       </div>
-      <Link
-        to={assessHref}
-        className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center"
-      >
-        ASSESS
-      </Link>
+      {showAssess && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); navigate(assessHref) }}
+          className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center"
+        >
+          ASSESS
+        </button>
+      )}
     </div>
   )
 }
