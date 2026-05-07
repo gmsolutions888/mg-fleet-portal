@@ -49,8 +49,17 @@ export default function AssignMechanic() {
       if (!activeStatuses.has(a.status)) continue
       load.set(a.mechanic, (load.get(a.mechanic) || 0) + 1)
     }
+    const apptBranch = (appt?.branch || '').toUpperCase().trim()
     const assessors = users
-      .filter((u) => ASSESSOR_ROLES.has(String(u.role || '').toLowerCase()) && u.is_active !== 0)
+      .filter((u) => {
+        if (!ASSESSOR_ROLES.has(String(u.role || '').toLowerCase())) return false
+        if (u.is_active === 0) return false
+        // Only show mechanics from the appointment's branch
+        if (apptBranch) {
+          return (u.branch || '').toUpperCase().trim() === apptBranch
+        }
+        return true
+      })
       .map((u) => ({
         id: u.id,
         name: u.name || u.email || '—',
@@ -60,7 +69,7 @@ export default function AssignMechanic() {
     return term
       ? assessors.filter((m) => m.name.toLowerCase().includes(term))
       : assessors
-  }, [rows, users, search])
+  }, [rows, users, search, appt])
 
   const currentName = appt?.mechanic && appt.mechanic !== 'Not yet assigned' ? appt.mechanic : null
 

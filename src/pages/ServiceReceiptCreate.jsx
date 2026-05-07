@@ -151,8 +151,18 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
         // Round 37 — auto-price the suggestions against the live Cavite
         // catalog. Uses the assessment header's caviteIds (Round 36)
         // so the price lookup is exact-FK, not name-resolved.
-        const headerMakeId = Number(a?.header?.makeId)
-        const headerModelId = Number(a?.header?.modelId)
+        let headerMakeId = Number(a?.header?.makeId)
+        let headerModelId = Number(a?.header?.modelId)
+        // If no caviteIds on the assessment, resolve from make/model names
+        if (!Number.isFinite(headerMakeId) || !Number.isFinite(headerModelId)) {
+          try {
+            const resolved = await resolveVehicleIds(a?.header?.make, a?.header?.model)
+            if (Number.isFinite(resolved.makeId)) headerMakeId = resolved.makeId
+            if (Number.isFinite(resolved.modelId)) headerModelId = resolved.modelId
+          } catch (err) {
+            console.warn('[quote-create] resolveVehicleIds failed:', err)
+          }
+        }
         const priced = await enrichItemsWithCatalogPrices(suggestions, {
           makeId: Number.isFinite(headerMakeId) ? headerMakeId : null,
           modelId: Number.isFinite(headerModelId) ? headerModelId : null,

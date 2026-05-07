@@ -9,20 +9,26 @@ import BottomNav from '../components/BottomNav'
 // leaves clearance for the bottom-tab bar on mobile.
 export default function PortalLayout() {
   return (
-    <div className="min-h-screen md:h-full md:flex">
-      <Sidebar />
+    <div className="min-h-screen md:h-full md:flex print:block">
+      <div className="print:hidden">
+        <Sidebar />
+      </div>
 
       <div className="flex-1 flex flex-col min-w-0 min-h-screen md:min-h-0">
-        <Topbar />
-        <main className="flex-1 overflow-auto bg-gray-50 pb-16 md:pb-0">
+        <div className="print:hidden">
+          <Topbar />
+        </div>
+        <main className="flex-1 overflow-auto bg-gray-50 pb-16 md:pb-0 print:overflow-visible print:bg-white print:pb-0">
           <Outlet />
         </main>
-        <footer className="hidden md:block text-center text-[11px] text-gray-500 py-2 border-t bg-white">
+        <footer className="hidden md:block text-center text-[11px] text-gray-500 py-2 border-t bg-white print:hidden">
           © GM Solutions Inc {new Date().getFullYear()}
         </footer>
       </div>
 
-      <BottomNav />
+      <div className="print:hidden">
+        <BottomNav />
+      </div>
     </div>
   )
 }

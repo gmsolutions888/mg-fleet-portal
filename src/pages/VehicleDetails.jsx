@@ -3,11 +3,14 @@
 
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { addDoc, collection, onSnapshot, orderBy, query, serverTimestamp, where } from 'firebase/firestore'
+import { auth, db } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
 import { isClientView } from '../lib/roles'
 import { loadVehicleWithHistory } from '../lib/vehicles'
 import { getActiveAppointmentsByPlate, APPT_STATUS } from '../lib/appointments'
 import { formatDate } from '../lib/dummyData'
+import { compressImage } from '../lib/photos'
 import VehicleImage from '../components/ui/VehicleImage'
 import RoadworthyBadge from '../components/ui/RoadworthyBadge'
 import StatusPill from '../components/ui/StatusPill'
@@ -216,8 +219,215 @@ export default function VehicleDetails() {
             </div>
           )}
         </Card>
+
+        {/* ── Service Logs Outside MG ──────────────────────────────────────── */}
+        <ServiceLogs plateNo={vehicle.plateNo} profile={profile} />
       </div>
     </div>
+  )
+}
+
+function ServiceLogs({ plateNo, profile }) {
+  const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
+  const [logs, setLogs] = useState([])
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), type: 'Preventive Maintenance', notes: '', replacedParts: '', photos: [] })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [lightbox, setLightbox] = useState(null)
+
+  useEffect(() => {
+    if (!db || !plateNo) return
+    const q = query(
+      collection(db, 'serviceLogs'),
+      where('plateNo', '==', plateNo.toUpperCase().replace(/\s+/g, '')),
+    )
+    const unsub = onSnapshot(q, (snap) => {
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      rows.sort((a, b) => {
+        const ta = a.date || a.createdAt?.toMillis?.() || 0
+        const tb = b.date || b.createdAt?.toMillis?.() || 0
+        return tb > ta ? 1 : ta > tb ? -1 : 0
+      })
+      setLogs(rows)
+    })
+    return unsub
+  }, [plateNo])
+
+  const handlePhoto = async (e) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    try {
+      const compressed = await compressImage(f)
+      setForm((prev) => ({ ...prev, photos: [...prev.photos, compressed] }))
+    } catch (err) {
+      console.error('[serviceLogs] photo compress failed:', err)
+    }
+  }
+
+  const removePhoto = (idx) => {
+    setForm((prev) => ({ ...prev, photos: prev.photos.filter((_, i) => i !== idx) }))
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (saving) return
+    setSaving(true); setError(null)
+    try {
+      await addDoc(collection(db, 'serviceLogs'), {
+        plateNo: plateNo.toUpperCase().replace(/\s+/g, ''),
+        date: form.date,
+        type: form.type,
+        replacedParts: form.type === 'Parts Replacement' ? form.replacedParts.trim() : null,
+        notes: form.notes.trim(),
+        photos: form.photos,
+        createdAt: serverTimestamp(),
+        createdBy: auth?.currentUser?.uid || null,
+        createdByName: profile?.name || profile?.email || null,
+      })
+      setForm({ date: new Date().toISOString().slice(0, 10), type: 'Preventive Maintenance', notes: '', replacedParts: '', photos: [] })
+      setShowForm(false)
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card title={`Service Logs Outside MG (${logs.length})`} icon={<Icon name="tool" className="w-4 h-4" />}>
+      {isFleetMgr && !showForm && (
+        <button
+          onClick={() => setShowForm(true)}
+          className="mb-3 text-xs bg-brand hover:bg-brand-dark text-white px-3 py-2 rounded-lg font-bold flex items-center gap-1.5"
+        >
+          <Icon name="plus" className="w-3.5 h-3.5" />
+          Add Service Log
+        </button>
+      )}
+
+      {showForm && (
+        <form onSubmit={submit} className="mb-4 bg-gray-50 border rounded-xl p-4 space-y-3">
+          <div className="text-xs font-bold uppercase tracking-wider text-gray-500">New Service Log</div>
+          {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Date of Service *</label>
+              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required className="input" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Type *</label>
+              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="input">
+                <option>Preventive Maintenance</option>
+                <option>Parts Replacement</option>
+              </select>
+            </div>
+          </div>
+
+          {form.type === 'Parts Replacement' && (
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Replaced Parts *</label>
+              <input
+                value={form.replacedParts}
+                onChange={(e) => setForm({ ...form, replacedParts: e.target.value })}
+                className="input w-full"
+                placeholder="e.g. Brake pads, Oil filter, Spark plugs"
+                required
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Service Notes</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              rows={3}
+              className="input w-full"
+              placeholder="Describe the service performed..."
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Attach Images</label>
+            <div className="flex gap-2 flex-wrap">
+              {form.photos.map((src, i) => (
+                <div key={i} className="relative w-16 h-16">
+                  <img src={src} className="w-16 h-16 rounded-lg object-cover border border-gray-200" alt="" />
+                  <button type="button" onClick={() => removePhoto(i)} className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-xs font-bold flex items-center justify-center shadow">✕</button>
+                </div>
+              ))}
+              {form.photos.length < 5 && (
+                <label className="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:border-brand hover:text-brand cursor-pointer transition-colors">
+                  <Icon name="plus" className="w-5 h-5" />
+                  <input type="file" accept="image/*" className="hidden" onChange={handlePhoto} />
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={() => setShowForm(false)} className="text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg">Cancel</button>
+            <button type="submit" disabled={saving} className="text-xs font-bold text-white bg-brand hover:bg-brand-dark disabled:opacity-40 px-4 py-2 rounded-lg shadow">{saving ? 'Saving…' : 'Save Log'}</button>
+          </div>
+        </form>
+      )}
+
+      {logs.length === 0 && !showForm && (
+        <div className="py-6 text-center text-gray-400 text-sm">No service logs outside MG yet.</div>
+      )}
+
+      {logs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm whitespace-nowrap">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-600">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Date</th>
+                <th className="px-3 py-2 text-left font-medium">Type</th>
+                <th className="px-3 py-2 text-left font-medium">Replaced Parts</th>
+                <th className="px-3 py-2 text-left font-medium">Notes</th>
+                <th className="px-3 py-2 text-left font-medium">Photos</th>
+                <th className="px-3 py-2 text-left font-medium">Added By</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {logs.map((log) => (
+                <tr key={log.id} className="hover:bg-gray-50">
+                  <td className="px-3 py-2 text-xs">{log.date || '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${log.type === 'Parts Replacement' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                      {log.type}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-blue-700 font-semibold">{log.replacedParts || '—'}</td>
+                  <td className="px-3 py-2 text-xs text-gray-700 max-w-[200px] whitespace-normal">{log.notes || '—'}</td>
+                  <td className="px-3 py-2">
+                    {log.photos?.length > 0 ? (
+                      <div className="flex gap-1">
+                        {log.photos.map((src, i) => (
+                          <img key={i} src={src} className="w-10 h-10 rounded object-cover border border-gray-200 cursor-pointer hover:opacity-80" alt="" onClick={() => setLightbox(src)} />
+                        ))}
+                      </div>
+                    ) : <span className="text-xs text-gray-400">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-[10px] text-gray-400">{log.createdByName || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Photo lightbox */}
+      {lightbox && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
+          <button onClick={() => setLightbox(null)} className="absolute top-4 right-4 w-10 h-10 bg-white/20 hover:bg-white/30 text-white rounded-full text-2xl font-bold flex items-center justify-center z-50">✕</button>
+          <img src={lightbox} className="max-w-full max-h-full object-contain rounded-lg" alt="Full view" onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+    </Card>
   )
 }
 

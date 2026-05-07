@@ -80,7 +80,7 @@ export const QUOT_STATUS_LABELS = Object.freeze({
 const ALLOWED_NEXT = Object.freeze({
   [QUOT_STATUS.DRAFT]:                [QUOT_STATUS.FOR_MG_FLEET_REVIEW],
   [QUOT_STATUS.FOR_MG_FLEET_REVIEW]:  [QUOT_STATUS.FOR_CLIENT_REVIEW, QUOT_STATUS.DRAFT],
-  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.DRAFT, QUOT_STATUS.FOR_MG_FLEET_REVIEW],
+  [QUOT_STATUS.FOR_CLIENT_REVIEW]:    [QUOT_STATUS.APPROVED_FINAL, QUOT_STATUS.CLIENT_REJECTED, QUOT_STATUS.DRAFT, QUOT_STATUS.FOR_MG_FLEET_REVIEW, QUOT_STATUS.FOR_CLIENT_REVIEW],
   [QUOT_STATUS.CLIENT_CLARIFICATION]: [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.CLIENT_REJECTED]:      [QUOT_STATUS.DRAFT],
   [QUOT_STATUS.APPROVED_FINAL]:       [],
@@ -137,6 +137,10 @@ export function availableQuotationActions(quot, profile) {
       push(QUOT_ACTION.BOUNCE_TO_SUPERVISOR, 'Bounce back to supervisor', QUOT_STATUS.DRAFT, 'ghost', true)
     }
   } else if (status === QUOT_STATUS.FOR_CLIENT_REVIEW) {
+    // Fleet manager can resend notification to client
+    if (isMgFleetMgr) {
+      push(QUOT_ACTION.FORWARD_TO_CLIENT, 'Resend to client', QUOT_STATUS.FOR_CLIENT_REVIEW)
+    }
     // Only fleet_client_manager can approve/reject/clarify
     const isClientManager = canApproveQuotations(profile.role)
     if (isClientManager) {
@@ -291,6 +295,25 @@ export async function transitionQuotation(id, { action, nextStatus, text, byProf
         company: companyVal,
         target_roles: ['fleet_client', 'fleet_client_manager'],
       })
+    }
+
+    // Share assessments with fleet client — update review_status to SENT_TO_CLIENT
+    if (plate) {
+      try {
+        const assessSnap = await getDocs(query(collection(db, 'assessments')))
+        const plateUp = plate.toUpperCase().replace(/\s+/g, '')
+        for (const d of assessSnap.docs) {
+          const h = d.data()?.header
+          if (String(h?.plate || '').toUpperCase().replace(/\s+/g, '') === plateUp) {
+            const current = d.data()?.review_status
+            if (current !== 'SENT_TO_CLIENT') {
+              await updateDoc(doc(db, 'assessments', d.id), { review_status: 'SENT_TO_CLIENT' })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[quotation] failed to share assessments with client:', err?.message || err)
+      }
     }
   } else if (action === QUOT_ACTION.BOUNCE_TO_SUPERVISOR) {
     emitNotification({

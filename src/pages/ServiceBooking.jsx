@@ -1,11 +1,13 @@
 // Service Booking page. Reads live `appointments` + writes new bookings via
 // createAppointment.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { canReviewAtBranch, canBookingRequests } from '../lib/roles'
 import { BRANCHES } from '../lib/dummyData'
+
+const CROSS_BRANCH_ROLES = new Set(['general_manager', 'call_center'])
 import { watchFleetCompanies } from '../lib/fleetCompanies'
 import { watchVehicles } from '../lib/vehicles'
 import { watchUsers } from '../lib/users'
@@ -62,7 +64,12 @@ function composeScheduledAt(dateStr, timeSlot) {
 export default function ServiceBooking() {
   const { profile } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const branch = (profile?.branch || 'MGCAVITE').toUpperCase()
+  const role = String(profile?.role || '').toLowerCase()
+  const canSwitchBranch = CROSS_BRANCH_ROLES.has(role)
+  const userBranch = (profile?.branch || '').toUpperCase()
+  const [selectedBranch, setSelectedBranch] = useState(userBranch || BRANCHES[0])
+  const [showBranchPicker, setShowBranchPicker] = useState(false)
+  const branch = canSwitchBranch ? selectedBranch : (userBranch || BRANCHES[0])
   const canReview = canReviewAtBranch(profile?.role) || profile?.is_admin
 
   // URL params from BookingRequests page — capture into state immediately
@@ -110,18 +117,26 @@ export default function ServiceBooking() {
     return () => { u1?.(); u2?.(); u3?.(); u4?.() }
   }, [])
 
+  // Filter appointments by selected branch
+  const branchAppointments = useMemo(() => {
+    return appointments.filter((a) => {
+      const ab = (a.branch || '').toUpperCase()
+      return ab === branch || !ab // include appointments without a branch
+    })
+  }, [appointments, branch])
+
   const stats = useMemo(() => {
-    const backlogs = appointments.filter((a) => ['ARRIVED', 'ONGOING', 'PENDING'].includes(a.status)).length
-    const confirmed = appointments.filter((a) => a.status === 'BOOKED' || a.status === 'CONFIRMED').length
-    const pendingApproval = appointments.filter((a) => a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL).length
+    const backlogs = branchAppointments.filter((a) => ['ARRIVED', 'ONGOING', 'PENDING'].includes(a.status)).length
+    const confirmed = branchAppointments.filter((a) => a.status === 'BOOKED' || a.status === 'CONFIRMED').length
+    const pendingApproval = branchAppointments.filter((a) => a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL).length
     return { backlogs, confirmed, pendingApproval }
-  }, [appointments])
+  }, [branchAppointments])
 
   // Group today's bookings by scheduled time slot for the day view. Only shows
   // bookings that have cleared branch approval (i.e. not PENDING_BRANCH_APPROVAL).
   const slotMap = useMemo(() => {
     const map = {}
-    for (const a of appointments) {
+    for (const a of branchAppointments) {
       if (!['BOOKED', 'ARRIVED', 'ONGOING', 'CONFIRMED', 'TENTATIVE'].includes(a.status)) continue
       const slot = a.scheduledTime || '8:00 AM'
       if (!map[slot]) map[slot] = []
@@ -129,18 +144,16 @@ export default function ServiceBooking() {
       map[slot].push({ ...a, model: v?.model, yearModel: v?.yearModel })
     }
     return map
-  }, [appointments, vehicles])
+  }, [branchAppointments, vehicles])
 
-  // Fleet bookings awaiting branch approval. Rendered below the time-slot grid
-  // so the branch reviewer can act on them inline.
   const pendingApproval = useMemo(() => {
-    return appointments
+    return branchAppointments
       .filter((a) => a.status === APPT_STATUS.PENDING_BRANCH_APPROVAL && a.company)
       .map((a) => {
         const v = vehicles.find((x) => x.plateNo === a.plateNo)
         return { ...a, model: v?.model, yearModel: v?.yearModel }
       })
-  }, [appointments, vehicles])
+  }, [branchAppointments, vehicles])
 
   const onApproveQueue = async (id) => {
     setQueueActing(id); setQueueError(null)
@@ -163,7 +176,34 @@ export default function ServiceBooking() {
     <div className="pb-24">
       <PageHero
         eyebrow="SERVICE BOOKINGS"
-        title={branch}
+        title={
+          canSwitchBranch ? (
+            <div className="relative inline-block">
+              <button
+                onClick={() => setShowBranchPicker(!showBranchPicker)}
+                className="flex items-center gap-2 hover:opacity-80"
+              >
+                <span>{branch}</span>
+                <span className="text-white/60 text-lg">⋯</span>
+              </button>
+              {showBranchPicker && (
+                <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-2xl border z-50 min-w-[200px] overflow-hidden">
+                  {BRANCHES.map((b) => (
+                    <button
+                      key={b}
+                      onClick={() => { setSelectedBranch(b); setShowBranchPicker(false) }}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 ${
+                        b === branch ? 'bg-brand/10 text-brand font-bold' : 'text-gray-800'
+                      }`}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : branch
+        }
         subtitle={todayLabel}
         right={<HeroStat value={stats.confirmed} label="TODAY" tone="solid" />}
       />

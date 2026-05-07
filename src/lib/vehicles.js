@@ -228,7 +228,12 @@ export function watchVehicles(options, cb) {
     }
     if (options?.company) {
       const target = String(options.company).toLowerCase().trim()
-      rows = rows.filter((v) => (v.company || '').toLowerCase().trim() === target)
+      console.log('[vehicles] company filter:', target, '| total vehicles:', rows.length, '| companies:', [...new Set(rows.map(v => v.company))])
+      rows = rows.filter((v) => {
+        const vc = (v.company || '').toLowerCase().trim()
+        return vc === target || vc.includes(target) || target.includes(vc)
+      })
+      console.log('[vehicles] after filter:', rows.length)
     }
     if (options?.branch) {
       const target = String(options.branch).toLowerCase().trim()

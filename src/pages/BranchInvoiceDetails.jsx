@@ -3,7 +3,7 @@
 // paid (Round 14). Line items are a snapshot taken at issue time, so later
 // edits to the source quotation don't retroactively change what was billed.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { formatMoney, formatDate, formatDateTime } from '../lib/dummyData'
@@ -18,6 +18,7 @@ import {
 } from '../lib/clientInvoices'
 import { getFleetCompanyByName } from '../lib/fleetCompanies'
 import { CREDIT_NOTE_KIND } from '../lib/creditNotes'
+import { getAssessmentsForPlate } from '../lib/assessments'
 import CreditNotesSection from '../components/CreditNotesSection'
 import PrintInvoice from '../components/PrintInvoice'
 import Icon from '../components/ui/Icon'
@@ -322,12 +323,38 @@ function ClientBillCard({ invoice, profile }) {
 }
 
 function LinkedDocsCard({ invoice }) {
+  const [finalAssessment, setFinalAssessment] = useState(null)
+  const [loadingFinal, setLoadingFinal] = useState(false)
+
+  useEffect(() => {
+    if (!invoice.plateNo) return
+    setLoadingFinal(true)
+    getAssessmentsForPlate(invoice.plateNo).then((all) => {
+      // Find the latest assessment that has fixes: Re-Assessment type,
+      // Quick Fix (pmsData.notes), or any assessment with replaced items
+      const withFixes = all.filter((a) =>
+        a.header?.type === 'Re-Assessment' ||
+        a.pmsData?.notes === 'Quick Fix' ||
+        Object.values(a.itemResults || {}).some((r) => r.resultCode === 'replaced')
+      )
+      // If none found, check if there's a second assessment (any type after the first)
+      if (withFixes.length > 0) {
+        setFinalAssessment(withFixes[0])
+      } else if (all.length > 1) {
+        setFinalAssessment(all[0]) // latest assessment
+      } else {
+        setFinalAssessment(null)
+      }
+      setLoadingFinal(false)
+    }).catch(() => setLoadingFinal(false))
+  }, [invoice.plateNo])
+
   return (
     <div className="bg-white rounded-2xl border overflow-hidden">
       <div className="bg-gray-50 border-b px-4 py-2.5 text-[11px] uppercase tracking-widest font-bold text-gray-500">
         Sources
       </div>
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Source Quotation</div>
           {invoice.quotationCode ? (
@@ -348,6 +375,31 @@ function LinkedDocsCard({ invoice }) {
               Unit status: <strong className="uppercase">{invoice.reassessmentStatus}</strong>
               {invoice.supervisorCleared ? ' (supervisor cleared)' : ''}
             </div>
+          )}
+        </div>
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Final Assessment (with fixes)</div>
+          {loadingFinal ? (
+            <span className="text-gray-400 text-xs">Loading…</span>
+          ) : finalAssessment?.rwaNumber ? (
+            <>
+              <Link to={`/assessments/${finalAssessment.rwaNumber}`} className="text-green-700 font-mono font-semibold hover:underline flex items-center gap-1">
+                <Icon name="check" className="w-3.5 h-3.5" />
+                {finalAssessment.rwaNumber}
+              </Link>
+              <div className="text-[11px] text-gray-500 mt-0.5">
+                {finalAssessment.header?.date || '—'}
+                {finalAssessment.pmsData?.notes === 'Quick Fix' && (
+                  <span className="ml-1 text-[9px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Quick Fix</span>
+                )}
+                {(() => {
+                  const replaced = Object.values(finalAssessment.itemResults || {}).filter((r) => r.resultCode === 'replaced').length
+                  return replaced > 0 ? ` · ${replaced} item${replaced === 1 ? '' : 's'} fixed` : ''
+                })()}
+              </div>
+            </>
+          ) : (
+            <span className="text-gray-400">No re-assessment on record</span>
           )}
         </div>
       </div>

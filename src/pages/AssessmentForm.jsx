@@ -82,10 +82,17 @@ export default function AssessmentForm() {
   const [loading, setLoading] = useState(true)
   const [vehicles, setVehicles] = useState([])
 
-  const [header, setHeader] = useState(() => initialDraft?.header || {
-    plate: '', make: '', model: '', yearModel: '',
-    client: '', branch: '', technician: '', odometer: '',
-    type: initialType, date: new Date().toISOString().slice(0, 10),
+  const [header, setHeader] = useState(() => {
+    const h = initialDraft?.header || {
+      plate: '', make: '', model: '', yearModel: '',
+      client: '', branch: '', technician: '', odometer: '',
+      type: initialType, date: new Date().toISOString().slice(0, 10),
+    }
+    // URL type param always overrides draft type
+    if (searchParams.get('type') && ASSESS_TYPES.includes(searchParams.get('type'))) {
+      h.type = searchParams.get('type')
+    }
+    return h
   })
   const [itemResults, setItemResults] = useState(() => initialDraft?.itemResults || {})
   // Round 18 — labor selection. `labors` is a code→bool map for the
@@ -536,8 +543,8 @@ export default function AssessmentForm() {
           </div>
           <Field label="Year"><input value={header.yearModel} onChange={(e) => setHeader((h) => ({ ...h, yearModel: e.target.value }))} className="input w-full" /></Field>
           <Field label="Odometer (km)"><input type="number" value={header.odometer} onChange={(e) => setHeader((h) => ({ ...h, odometer: e.target.value }))} className="input w-full" /></Field>
-          <Field label="Client / Fleet"><input value={header.client} onChange={(e) => setHeader((h) => ({ ...h, client: e.target.value }))} className="input w-full" /></Field>
-          <Field label="Branch"><input value={header.branch} onChange={(e) => setHeader((h) => ({ ...h, branch: e.target.value }))} className="input w-full" /></Field>
+          <Field label="Client / Fleet"><input value={header.client} disabled className="input w-full bg-gray-50" /></Field>
+          <Field label="Branch"><input value={header.branch} disabled className="input w-full bg-gray-50" /></Field>
           <Field label="Technician"><input id="assess-technician" value={header.technician} onChange={(e) => setHeader((h) => ({ ...h, technician: e.target.value }))} className="input w-full scroll-mt-4" /></Field>
           <Field label="Type">
             <select value={header.type} onChange={(e) => { setHeader((h) => ({ ...h, type: e.target.value })); prefilledKeyRef.current = '' }} className="input w-full">

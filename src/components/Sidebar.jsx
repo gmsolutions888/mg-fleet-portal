@@ -169,10 +169,9 @@ export default function Sidebar() {
       <aside className={shellClasses}>
         <Brand />
         <Section title="Fleet">
+          <Item to="/portal/notifications" label="Notifications" />
           {canClientDashboard(role) && <Item to="/portal" label="Fleet Dashboard" />}
           {canMyFleet(role) && <Item to="/portal/my-fleet" label="My Fleet" />}
-          <Item to="/portal/service-log" label="Service Log" />
-          <Item to="/portal/notifications" label="Notifications" />
           {canServiceQuotation(role) && <Item to="/portal/quotations" label="Service Quotations" badge={forReviewCount} />}
           {canClientInvoice(role) && <Item to="/portal/invoices" label="Service Receipts" />}
           {canClientInvoice(role) && <Item to="/portal/statement" label="Statement of Account" />}

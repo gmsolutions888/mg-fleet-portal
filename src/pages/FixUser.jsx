@@ -76,6 +76,81 @@ export default function FixUser() {
     }
   }
 
+  const createTestVehicle = async () => {
+    setStatus('Creating test vehicle...')
+    try {
+      await addDoc(collection(db, 'assessments'), {
+        id: Date.now(),
+        rwaNumber: `RWA-2026-${Date.now().toString().slice(-6)}`,
+        header: {
+          plate: 'TEST001',
+          make: 'Toyota',
+          model: 'Hilux',
+          yearModel: '2024',
+          client: 'Purefoods — San Miguel Corporation',
+          branch: 'MGCAVITE',
+          technician: 'System',
+          odometer: 15000,
+          type: 'Initial',
+          date: new Date().toISOString().slice(0, 10),
+        },
+        itemResults: {},
+        classification: { overallStatus: 'active', dispatchAllowed: true, failCriticalCount: 0, monitorCount: 0, totalBlockerCount: 0 },
+        fmsStatus: 'synced',
+        submittedAt: new Date().toISOString(),
+        review_status: 'SENT_TO_CLIENT',
+        createdBy: user?.uid || null,
+      })
+      await addDoc(collection(db, 'assessments'), {
+        id: Date.now() + 1,
+        rwaNumber: `RWA-2026-${(Date.now() + 1).toString().slice(-6)}`,
+        header: {
+          plate: 'TEST002',
+          make: 'Toyota',
+          model: 'Vios',
+          yearModel: '2023',
+          client: 'Purefoods — San Miguel Corporation',
+          branch: 'MGCAVITE',
+          technician: 'System',
+          odometer: 28000,
+          type: 'Initial',
+          date: new Date().toISOString().slice(0, 10),
+        },
+        itemResults: {},
+        classification: { overallStatus: 'conditional', dispatchAllowed: true, failCriticalCount: 0, monitorCount: 2, totalBlockerCount: 0 },
+        fmsStatus: 'synced',
+        submittedAt: new Date().toISOString(),
+        review_status: 'SENT_TO_CLIENT',
+        createdBy: user?.uid || null,
+      })
+      await addDoc(collection(db, 'assessments'), {
+        id: Date.now() + 2,
+        rwaNumber: `RWA-2026-${(Date.now() + 2).toString().slice(-6)}`,
+        header: {
+          plate: 'TEST003',
+          make: 'Mitsubishi',
+          model: 'L300',
+          yearModel: '2022',
+          client: 'Purefoods — San Miguel Corporation',
+          branch: 'MGCAVITE',
+          technician: 'System',
+          odometer: 45000,
+          type: 'Initial',
+          date: new Date().toISOString().slice(0, 10),
+        },
+        itemResults: {},
+        classification: { overallStatus: 'deferred', dispatchAllowed: false, failCriticalCount: 2, monitorCount: 1, totalBlockerCount: 2 },
+        fmsStatus: 'synced',
+        submittedAt: new Date().toISOString(),
+        review_status: 'SENT_TO_CLIENT',
+        createdBy: user?.uid || null,
+      })
+      setStatus('Done! 3 test vehicles created for Purefoods (TEST001, TEST002, TEST003). Refresh the fleet pages.')
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>Fix User</h1>
@@ -107,6 +182,12 @@ export default function FixUser() {
           style={{ background: '#7c3aed', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
         >
           Set gm@test.com as Fleet Manager
+        </button>
+        <button
+          onClick={createTestVehicle}
+          style={{ background: '#d97706', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Create 3 Purefoods Vehicles
         </button>
       </div>
     </div>

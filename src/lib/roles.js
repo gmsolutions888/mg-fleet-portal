@@ -103,7 +103,6 @@ export const ROLE_REGISTRY = {
     category: 'internal',
     defaultRoute: '/home',
     assessment: true,
-    serviceQuotation: true,
     myGarage: true,
   },
   warrior: {
@@ -111,7 +110,6 @@ export const ROLE_REGISTRY = {
     category: 'internal',
     defaultRoute: '/appointments',
     assessment: true,
-    serviceQuotation: true,
     myGarage: true,
   },
   dispatcher: {
@@ -119,7 +117,6 @@ export const ROLE_REGISTRY = {
     category: 'internal',
     defaultRoute: '/appointments',
     assessment: true,
-    serviceQuotation: true,
     myGarage: true,
   },
 
@@ -172,6 +169,7 @@ export const ROLE_REGISTRY = {
     myFleet: true,
     clientDashboard: true,
     serviceQuotation: 'read',
+    clientInvoice: true,
     booking: true,
     scheduleService: true,
   },
@@ -183,7 +181,6 @@ export const ROLE_REGISTRY = {
     category: 'internal',
     defaultRoute: '/appointments',
     assessment: true,
-    serviceQuotation: true,
   },
 }
 

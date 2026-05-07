@@ -75,7 +75,8 @@ export default function ClientInvoiceDetails() {
   if (customerView) {
     const myCompany = (profileCompany(profile) || '').toString().trim().toLowerCase()
     const billed = (invoice.company || '').toString().trim().toLowerCase()
-    if (myCompany && billed && myCompany !== billed) {
+    const companyMatch = !myCompany || !billed || myCompany === billed || myCompany.includes(billed) || billed.includes(myCompany)
+    if (myCompany && billed && !companyMatch) {
       return (
         <div className="p-4 sm:p-6 space-y-3">
           <button onClick={() => navigate(-1)} className="text-sm text-gray-500 hover:underline mb-4">← Back</button>

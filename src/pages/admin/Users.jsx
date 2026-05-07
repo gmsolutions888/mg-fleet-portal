@@ -3,14 +3,17 @@
 // toggles that option (useful while Firebase email-link sign-in isn't yet
 // enabled in the project's console).
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { watchUsers, updateUser } from '../../lib/users'
+import { sendPasswordResetEmail } from 'firebase/auth'
+import { auth } from '../../lib/firebase'
 import {
   createPendingInvite, sendInviteEmail, createUserWithTempPassword,
 } from '../../lib/invites'
 import { watchFleetCompanies } from '../../lib/fleetCompanies'
 import { ROLE_REGISTRY } from '../../lib/roles'
+import { BRANCHES } from '../../lib/dummyData'
 import Icon from '../../components/ui/Icon'
 import PageHero, { HeroStat } from '../../components/ui/PageHero'
 
@@ -130,7 +133,11 @@ export default function Users() {
         if (useTempPassword) {
           const pwd = tempPwd.trim() || defaultTempPwd()
           const uid = await createUserWithTempPassword(readConfigFromEnv(), form.email, pwd)
-          setSaveOk(`User created. Share these credentials: ${form.email} / ${pwd}. (UID: ${uid})`)
+          // Also send email notification
+          try { await sendInviteEmail(form.email) } catch (emailErr) {
+            console.warn('[invite] email send failed (account still created):', emailErr.message)
+          }
+          setSaveOk(`User created. Credentials: ${form.email} / ${pwd}. An invite email was also sent.`)
         } else {
           await sendInviteEmail(form.email)
           setSaveOk(`Invite sent to ${form.email}. They'll click the link in their inbox to finish signing up.`)
@@ -161,7 +168,51 @@ export default function Users() {
     catch (err) { alert('Failed: ' + (err.message || err)) }
   }
 
-  const isCustomerRole = ['fleet_manager', 'fleet_user', 'customer'].includes(form.role)
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState(null) // { title, message, tone, onConfirm }
+
+  const resetPassword = (u) => {
+    if (!u.email) { setSaveErr('No email on this user.'); return }
+    // Use setTimeout so the dropdown closes first before modal opens
+    setTimeout(() => {
+      setConfirmModal({
+        title: 'Reset Password',
+        message: `Send password reset email to ${u.email}?`,
+        tone: 'default',
+        onConfirm: async () => {
+          setConfirmModal(null)
+          try {
+            await sendPasswordResetEmail(auth, u.email)
+            setSaveOk(`Password reset email sent to ${u.email}.`)
+          } catch (err) {
+            setSaveErr('Failed: ' + (err.message || err))
+          }
+        },
+      })
+    }, 100)
+  }
+
+  const toggleActive = (u) => {
+    const isActive = u.is_active !== 0
+    setTimeout(() => setConfirmModal({
+      title: isActive ? 'Deactivate User' : 'Activate User',
+      message: isActive
+        ? `Deactivate ${u.name || u.email}? They will no longer be able to access the portal.`
+        : `Activate ${u.name || u.email}? They will regain access to the portal.`,
+      tone: isActive ? 'danger' : 'default',
+      onConfirm: async () => {
+        setConfirmModal(null)
+        try {
+          await updateUser(u.id, { is_active: isActive ? 0 : 1 })
+          setSaveOk(`${u.name || u.email} ${isActive ? 'deactivated' : 'activated'}.`)
+        } catch (err) {
+          setSaveErr('Failed: ' + (err.message || err))
+        }
+      },
+    }), 100)
+  }
+
+  const isCustomerRole = ROLE_REGISTRY[form.role]?.category === 'customer'
 
   const adminCount = filteredUsers.filter((u) => u.is_admin).length
 
@@ -260,33 +311,26 @@ export default function Users() {
               </select>
             </Field>
             {isCustomerRole ? (
-              <Field label="Fleet Company *" hint="Must exactly match mg-fms's `header.client` value (e.g. 'Purefoods — San Miguel Corporation').">
-                <select value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="input">
-                  <option value="">— select —</option>
+              <Field label="Fleet Company *">
+                <select value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="input" required>
+                  <option value="">— select fleet company —</option>
                   {companies.map((c) => (
                     <option key={c.id} value={c.name}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
                   ))}
                 </select>
               </Field>
             ) : (
-              <Field label="Branch" hint="Which garage branch (e.g. MGCAVITE)?">
-                <input value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value.toUpperCase() })} className="input uppercase" />
+              <Field label="Branch *">
+                <select value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} className="input">
+                  <option value="">— select branch —</option>
+                  {BRANCHES.map((b) => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
               </Field>
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-            <label className="inline-flex items-center gap-2">
-              <input type="checkbox" checked={form.is_admin} onChange={(e) => setForm({ ...form, is_admin: e.target.checked })} />
-              Grant admin access (can manage users + companies)
-            </label>
-            {isCustomerRole && (
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" checked={form.quotation_approver} onChange={(e) => setForm({ ...form, quotation_approver: e.target.checked })} />
-                Can approve/reject fleet quotations
-              </label>
-            )}
-          </div>
 
           {mode === 'invite' && (
             <div className="border rounded-md p-3 bg-gray-50 space-y-2 text-xs">
@@ -335,7 +379,8 @@ export default function Users() {
               user={u}
               isYou={u.id === profile?.id}
               onEdit={() => openEdit(u)}
-              onToggleAdmin={() => toggleAdmin(u)}
+              onResetPassword={() => resetPassword(u)}
+              onToggleActive={() => toggleActive(u)}
             />
           ))}
         </div>
@@ -345,12 +390,12 @@ export default function Users() {
           <table className="min-w-full text-sm whitespace-nowrap">
             <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-600">
               <tr>
-                <th className="px-4 py-3 text-left font-medium">Name</th>
-                <th className="px-4 py-3 text-left font-medium">Email</th>
-                <th className="px-4 py-3 text-left font-medium">Role</th>
-                <th className="px-4 py-3 text-left font-medium">Company / Branch</th>
-                <th className="px-4 py-3 text-center font-medium">Admin</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+                <th className="px-3 py-3 text-center font-medium w-10"></th>
+                <th className="px-3 py-3 text-left font-medium">Name</th>
+                <th className="px-3 py-3 text-left font-medium">Email</th>
+                <th className="px-3 py-3 text-left font-medium">Role</th>
+                <th className="px-3 py-3 text-left font-medium">Company / Branch</th>
+                <th className="px-3 py-3 text-center font-medium">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -358,32 +403,37 @@ export default function Users() {
               {!loading && loadErr && <Empty cols={6} error>Failed to load: {loadErr.message || String(loadErr)}</Empty>}
               {!loading && !loadErr && filteredUsers.length === 0 && <Empty cols={6}>No users yet.</Empty>}
               {filteredUsers.map((u) => (
-                <tr key={u.id}>
-                  <td className="px-4 py-2 font-medium text-gray-800">{u.name || '—'}</td>
-                  <td className="px-4 py-2 text-gray-600 font-mono text-xs">{u.email}</td>
-                  <td className="px-4 py-2">
-                    <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
+                <tr key={u.id} className={u.is_active === 0 ? 'opacity-60' : ''}>
+                  <td className="px-3 py-2 text-center">
+                    {u.id !== profile?.id ? (
+                      <DropdownActions
+                        onEdit={() => openEdit(u)}
+                        onResetPassword={() => resetPassword(u)}
+                        onToggleActive={() => toggleActive(u)}
+                        isActive={u.is_active !== 0}
+                      />
+                    ) : (
+                      <span className="text-[9px] text-gray-400">(you)</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 font-medium text-gray-800">{u.name || '—'}</td>
+                  <td className="px-3 py-2 text-gray-600 font-mono text-xs">{u.email}</td>
+                  <td className="px-3 py-2">
+                    <span className="inline-block px-2 py-0.5 text-[10px] rounded-full bg-gray-100 text-gray-700">
                       {ROLE_REGISTRY[u.role]?.label || u.role || '—'}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-xs text-gray-600">
+                  <td className="px-3 py-2 text-xs text-gray-600">
                     {u.company_id || u.company
-                      ? <span className="font-mono">{u.company_id || u.company}</span>
+                      ? <span>{u.company_id || u.company}</span>
                       : u.branch
-                        ? <span className="font-mono">{u.branch}</span>
+                        ? <span>{u.branch}</span>
                         : '—'}
                   </td>
-                  <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => toggleAdmin(u)}
-                      className={`text-xs px-2 py-0.5 rounded-full ${u.is_admin ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}
-                    >
-                      {u.is_admin ? 'Admin' : '—'}
-                    </button>
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button onClick={() => openEdit(u)} className="text-brand hover:underline text-xs mr-3">Edit</button>
-                    {u.id === profile?.id && <span className="text-[10px] text-gray-400">(you)</span>}
+                  <td className="px-3 py-2 text-center">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${u.is_active === 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {u.is_active === 0 ? 'Inactive' : 'Active'}
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -391,23 +441,59 @@ export default function Users() {
           </table>
         </div>
       </div>
+
+      {/* Confirmation modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-gray-900 mb-2">{confirmModal.title}</div>
+              <div className="text-sm text-gray-600">{confirmModal.message}</div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmModal.onConfirm}
+                className={`flex-1 text-sm font-bold text-white px-4 py-3 rounded-xl shadow ${
+                  confirmModal.tone === 'danger'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-brand hover:bg-brand-dark'
+                }`}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function UserCard({ user, isYou, onEdit, onToggleAdmin }) {
+function UserCard({ user, isYou, onEdit, onResetPassword, onToggleActive }) {
   const roleLabel = ROLE_REGISTRY[user.role]?.label || user.role || '—'
   const isCustomer = ROLE_REGISTRY[user.role]?.category === 'customer'
+  const isActive = user.is_active !== 0
   return (
-    <div className="bg-white rounded-2xl border p-4">
+    <div className={`rounded-2xl border p-4 ${isActive ? 'bg-white' : 'bg-gray-50 opacity-70'}`}>
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-full bg-brand text-white flex items-center justify-center text-sm font-black shrink-0">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-black shrink-0 ${isActive ? 'bg-brand text-white' : 'bg-gray-300 text-gray-500'}`}>
           {(user.name || user.email || '?').charAt(0).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="font-bold text-gray-900 text-sm truncate">{user.name || '—'}</div>
             {isYou && <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-bold">YOU</span>}
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              {isActive ? 'Active' : 'Inactive'}
+            </span>
           </div>
           <div className="text-[11px] text-gray-500 font-mono break-all">{user.email}</div>
           <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -427,25 +513,92 @@ function UserCard({ user, isYou, onEdit, onToggleAdmin }) {
           </div>
         </div>
       </div>
-      <div className="mt-3 pt-3 border-t grid grid-cols-2 gap-2">
-        <button
-          onClick={onToggleAdmin}
-          className={`text-xs font-bold px-3 py-2 rounded-lg border-2 ${
-            user.is_admin
-              ? 'bg-amber-100 border-amber-300 text-amber-800'
-              : 'bg-white border-gray-200 text-gray-500'
-          }`}
-        >
-          {user.is_admin ? '★ Admin' : 'Make Admin'}
-        </button>
-        <button
-          onClick={onEdit}
-          className="text-xs bg-gray-900 hover:bg-black text-white font-bold px-3 py-2 rounded-lg"
-        >
-          Edit
-        </button>
+      <div className="mt-3 pt-3 border-t flex justify-end">
+        {!isYou ? (
+          <DropdownActions
+            onEdit={onEdit}
+            onResetPassword={onResetPassword}
+            onToggleActive={onToggleActive}
+            isActive={isActive}
+          />
+        ) : (
+          <span className="text-[9px] text-gray-400">(you)</span>
+        )}
       </div>
     </div>
+  )
+}
+
+function DropdownActions({ onEdit, onResetPassword, onToggleActive, isActive }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const btnRef = useRef(null)
+  const [pos, setPos] = useState({ top: 0, left: 0 })
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return
+      if (btnRef.current && btnRef.current.contains(e.target)) return
+      setOpen(false)
+    }
+    // Use setTimeout so the current click finishes before we start listening
+    const timer = setTimeout(() => document.addEventListener('click', close), 0)
+    return () => { clearTimeout(timer); document.removeEventListener('click', close) }
+  }, [open])
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect()
+      setPos({ top: rect.bottom + 4, left: rect.left })
+    }
+    setOpen(!open)
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        className="text-gray-400 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100 text-sm font-bold"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          ref={ref}
+          style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, minWidth: 160, background: '#fff', borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: '1px solid #e5e7eb' }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <button
+              onClick={() => { onEdit(); setOpen(false) }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', fontSize: 12, color: '#374151', background: 'none', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={(e) => e.target.style.background = '#f9fafb'}
+              onMouseLeave={(e) => e.target.style.background = 'none'}
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => { onResetPassword(); setOpen(false) }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', fontSize: 12, color: '#374151', background: 'none', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={(e) => e.target.style.background = '#f9fafb'}
+              onMouseLeave={(e) => e.target.style.background = 'none'}
+            >
+              Reset Password
+            </button>
+            <div style={{ borderTop: '1px solid #e5e7eb' }} />
+            <button
+              onClick={() => { onToggleActive(); setOpen(false) }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 16px', fontSize: 12, color: isActive ? '#dc2626' : '#16a34a', background: 'none', border: 'none', cursor: 'pointer' }}
+              onMouseEnter={(e) => e.target.style.background = '#f9fafb'}
+              onMouseLeave={(e) => e.target.style.background = 'none'}
+            >
+              {isActive ? 'Deactivate' : 'Activate'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -471,7 +624,7 @@ function Banner({ kind, children }) {
 }
 
 function emptyForm() {
-  return { name: '', email: '', role: 'fleet_user', company: '', branch: '', is_admin: false, quotation_approver: false }
+  return { name: '', email: '', role: 'fleet_client', company: '', branch: '', is_admin: false, quotation_approver: false }
 }
 
 function defaultTempPwd() {

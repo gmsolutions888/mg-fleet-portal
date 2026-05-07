@@ -154,14 +154,20 @@ export function watchClientInvoices(options, cb) {
   // combine where('company') + orderBy('issuedAt'). Sort client-side
   // instead so the page works without an index deploy. Volume is low
   // (tens to low-hundreds per company) — sorting in JS is free here.
+  // Fetch all and filter client-side for flexible company matching
   const q = options?.company
-    ? query(collection(db, COLLECTION), where('company', '==', options.company))
+    ? query(collection(db, COLLECTION))
     : query(collection(db, COLLECTION), orderBy('issuedAt', 'desc'))
   return onSnapshot(
     q,
     (snap) => {
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      let rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
       if (options?.company) {
+        const target = options.company.toLowerCase().trim()
+        rows = rows.filter((r) => {
+          const rc = (r.company || '').toLowerCase().trim()
+          return rc === target || rc.includes(target) || target.includes(rc)
+        })
         rows.sort((a, b) => {
           const ax = Date.parse(a?.issuedAtIso || '') || 0
           const bx = Date.parse(b?.issuedAtIso || '') || 0

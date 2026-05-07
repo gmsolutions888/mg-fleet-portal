@@ -14,6 +14,7 @@ import { isClientView } from '../lib/roles'
 import { isVisibleToClient, statusBadge } from '../lib/reviewStatus'
 import { clearDispatchBySupervisor } from '../lib/assessments'
 import { getApprovedQuotationForPlate } from '../lib/serviceReceipts'
+import Icon from '../components/ui/Icon'
 import {
   ALL_ITEMS, CATEGORIES, DEFECT_CODES, PMS_ITEMS, SC, ACTION_CFG,
   calcHealthScore, healthColor, getAction,
@@ -38,6 +39,8 @@ export default function AssessmentView() {
   const clientView = isClientView(profile)
   const [state, setState] = useState({ loading: true, assessment: null, error: null })
   const [overrideOpen, setOverrideOpen] = useState(false)
+  const [clientCanView, setClientCanView] = useState(false)
+  const [lightboxSrc, setLightboxSrc] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -46,6 +49,28 @@ export default function AssessmentView() {
       .catch((err) => { if (!cancelled) setState({ loading: false, assessment: null, error: err }) })
     return () => { cancelled = true }
   }, [rwa])
+
+  // Check if fleet client can view this assessment
+  useEffect(() => {
+    if (!clientView) { setClientCanView(true); return }
+    const a = state.assessment
+    if (!a) return
+    if (isVisibleToClient(a.review_status)) { setClientCanView(true); return }
+    // Check if a quotation for this plate has been forwarded to client
+    const plate = a.header?.plate
+    if (!plate) return
+    const CLIENT_VISIBLE_STATUSES = new Set(['FOR_CLIENT_REVIEW', 'CLIENT_CLARIFICATION', 'CLIENT_REJECTED', 'APPROVED_FINAL'])
+    getDocs(query(collection(db, 'serviceReceipts'), where('kind', '==', 'quotation'), where('plateNo', '==', plate.toUpperCase().replace(/\s+/g, ''))))
+      .then((snap) => {
+        for (const d of snap.docs) {
+          if (CLIENT_VISIBLE_STATUSES.has(d.data()?.status)) {
+            setClientCanView(true)
+            return
+          }
+        }
+      })
+      .catch(() => {})
+  }, [clientView, state.assessment])
 
   if (state.loading) return <div className="p-4 sm:p-6 text-gray-500">Loading assessment…</div>
   if (!state.assessment) {
@@ -63,9 +88,7 @@ export default function AssessmentView() {
     )
   }
 
-  // Hide assessments that haven't been forwarded to the client yet — but only
-  // for client-view profiles. Internal staff and admins always see everything.
-  if (clientView && !isVisibleToClient(state.assessment.review_status)) {
+  if (clientView && !clientCanView) {
     const badge = statusBadge(state.assessment.review_status)
     return (
       <div className="p-4 sm:p-6">
@@ -88,7 +111,9 @@ export default function AssessmentView() {
   const hc = healthColor(score)
 
   const isAdmin = Boolean(profile?.is_admin)
-  const canOverride = isAdmin && cls.dispatchAllowed === false && !a.supervisorCleared
+  const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
+  const showBlocked = cls.dispatchAllowed === false && !a.supervisorCleared
+  const canOverride = isAdmin && !isFleetMgr && showBlocked
 
   const applyOverride = ({ name, ts, remarks }) => {
     // Merge locally so the page shows the green "Supervisor Override Applied"
@@ -111,9 +136,165 @@ export default function AssessmentView() {
     return r?.resultCode === 'fail_critical' || r?.resultCode === 'monitor' || r?.resultCode === 'replaced'
   })
 
+  const exportPdf = async () => {
+    try {
+    const jsPDFModule = await import('jspdf')
+    const jsPDF = jsPDFModule.default || jsPDFModule.jsPDF
+    const autoTableModule = await import('jspdf-autotable')
+    const autoTableFn = autoTableModule.default || autoTableModule
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const table = (opts) => { autoTableFn(pdf, opts); return pdf.lastAutoTable }
+    const w = pdf.internal.pageSize.getWidth()
+    let y = 15
+
+    // Title
+    pdf.setFontSize(16)
+    pdf.setFont(undefined, 'bold')
+    pdf.text('Vehicle Roadworthiness Assessment', w / 2, y, { align: 'center' })
+    y += 8
+    pdf.setFontSize(10)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(a.rwaNumber || '', w / 2, y, { align: 'center' })
+    y += 10
+
+    // Status
+    pdf.setFontSize(12)
+    pdf.setFont(undefined, 'bold')
+    const statusText = (cls.overallStatus || '').toUpperCase()
+    pdf.text(`Status: ${statusText}`, 14, y)
+    pdf.text(`Health Score: ${score}/100`, w - 14, y, { align: 'right' })
+    y += 6
+    pdf.setFontSize(9)
+    pdf.setFont(undefined, 'normal')
+    pdf.text(cls.dispatchAllowed ? 'Dispatch Allowed' : 'Unit on Hold — Do NOT Dispatch', 14, y)
+    y += 8
+
+    // Vehicle info table
+    table({
+      startY: y,
+      head: [['Field', 'Value']],
+      body: [
+        ['Plate', a.header?.plate || '—'],
+        ['Vehicle', [a.header?.make, a.header?.model, a.header?.yearModel].filter(Boolean).join(' ') || '—'],
+        ['Client', a.header?.client || '—'],
+        ['Branch', a.header?.branch || '—'],
+        ['Technician', a.header?.technician || '—'],
+        ['Odometer', a.header?.odometer ? `${a.header.odometer} km` : '—'],
+        ['Type', a.header?.type || '—'],
+        ['Date', a.header?.date || '—'],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [55, 65, 81], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 35 } },
+      margin: { left: 14, right: 14 },
+    })
+    y = (pdf.lastAutoTable?.finalY || y) + 8
+
+    // Classification
+    table({
+      startY: y,
+      head: [['Classification', 'Value']],
+      body: [
+        ['Technical Status', (cls.technicalStatus || cls.overallStatus || '').toUpperCase()],
+        ['Compliance', cls.complianceStatus === 'compliant' ? 'COMPLIANT' : 'NON-COMPLIANT'],
+        ['Dispatch Allowed', cls.dispatchAllowed ? 'YES' : 'NO'],
+        ['Critical Items', String(cls.failCriticalCount || 0)],
+        ['Monitors', String(cls.monitorCount || 0)],
+        ['Dispatch Blockers', String(cls.totalBlockerCount || 0)],
+        ['Reassessment Due', cls.reassessmentDue || 'None'],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [55, 65, 81], fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 45 } },
+      margin: { left: 14, right: 14 },
+    })
+    y = (pdf.lastAutoTable?.finalY || y) + 8
+
+    // Findings
+    if (findings.length > 0) {
+      pdf.setFontSize(10)
+      pdf.setFont(undefined, 'bold')
+      pdf.text(`Assessment Findings (${findings.length})`, 14, y)
+      y += 5
+
+      const findingsData = findings.map((item) => {
+        const r = a.itemResults?.[item.code] || {}
+        const rc = r.resultCode || 'na'
+        const status = rc === 'fail_critical' ? 'CRITICAL' : rc === 'monitor' ? 'MONITOR' : rc === 'replaced' ? 'FIXED' : rc.toUpperCase()
+        const defect = r.defectCode ? (DEFECT_CODES[r.defectCode] || r.defectCode) : ''
+        const measured = r.measuredValue !== undefined && r.measuredValue !== '' ? `${r.measuredValue}${item.unit || ''}` : ''
+        const note = r.note || ''
+        return [item.label, status, defect, measured, note]
+      })
+
+      table({
+        startY: y,
+        head: [['Item', 'Status', 'Defect', 'Measured', 'Note']],
+        body: findingsData,
+        theme: 'grid',
+        headStyles: { fillColor: [185, 28, 28], fontSize: 7 },
+        bodyStyles: { fontSize: 7 },
+        columnStyles: {
+          0: { cellWidth: 40 },
+          1: { cellWidth: 18, halign: 'center' },
+          4: { cellWidth: 40 },
+        },
+        margin: { left: 14, right: 14 },
+      })
+      y = (pdf.lastAutoTable?.finalY || y) + 8
+    }
+
+    // Full inspection breakdown
+    const breakdownData = []
+    for (const cat of CATEGORIES) {
+      const items = ALL_ITEMS.filter((i) => i.category === cat.key)
+      for (const item of items) {
+        const r = a.itemResults?.[item.code] || {}
+        const rc = r.resultCode
+        if (!rc) continue
+        const label = rc === 'pass' ? 'Pass' : rc === 'monitor' ? 'Monitor' : rc === 'fail_critical' ? 'Critical' : rc === 'replaced' ? 'Replaced' : 'N/A'
+        breakdownData.push([cat.label, item.label, label])
+      }
+    }
+    if (breakdownData.length > 0) {
+      pdf.setFontSize(10)
+      pdf.setFont(undefined, 'bold')
+      if (y > 260) { pdf.addPage(); y = 15 }
+      pdf.text('Full Inspection Breakdown', 14, y)
+      y += 5
+      table({
+        startY: y,
+        head: [['Category', 'Item', 'Result']],
+        body: breakdownData,
+        theme: 'grid',
+        headStyles: { fillColor: [55, 65, 81], fontSize: 7 },
+        bodyStyles: { fontSize: 7 },
+        columnStyles: { 0: { cellWidth: 30 }, 2: { cellWidth: 20, halign: 'center' } },
+        margin: { left: 14, right: 14 },
+      })
+    }
+
+    // Footer
+    const pageCount = pdf.internal.getNumberOfPages()
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i)
+      pdf.setFontSize(7)
+      pdf.setFont(undefined, 'normal')
+      pdf.text(`MG Fleet Portal — ${a.rwaNumber} — Page ${i} of ${pageCount}`, w / 2, pdf.internal.pageSize.getHeight() - 8, { align: 'center' })
+    }
+
+    pdf.save(`${a.rwaNumber || 'assessment'}.pdf`)
+    } catch (err) {
+      console.error('[exportPdf] failed:', err)
+      alert('PDF export failed: ' + (err.message || err))
+    }
+  }
+
   return (
     <div className="pb-20">
-      {/* Desktop-only back link — mobile Topbar already provides one */}
+      {/* Back link */}
       <button
         onClick={() => navigate(-1)}
         className="hidden md:inline-block m-4 text-sm text-gray-500 hover:underline"
@@ -155,28 +336,96 @@ export default function AssessmentView() {
         {!clientView && <PostAssessCta a={a} />}
 
         {/* ── Supervisor override CTA (admins, still-blocked units only) ─ */}
-        {canOverride && (
+        {showBlocked && (
           <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-4">
             <div className="flex items-start gap-3">
               <div className="text-2xl leading-none">⛔</div>
               <div className="flex-1 min-w-0">
                 <div className="font-black text-red-800 text-sm">Dispatch blocked</div>
                 <div className="text-xs text-red-700 mt-1">
-                  This unit failed one or more critical items. If you've inspected it in person and are
-                  authorising its release, stamp an override with a written reason — the audit trail is
-                  preserved.
+                  This unit failed one or more critical items.{canOverride ? ' If you\'ve inspected it in person and are authorising its release, stamp an override with a written reason — the audit trail is preserved.' : ''}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setOverrideOpen(true)}
-                  className="mt-3 bg-red-700 hover:bg-red-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow"
-                >
-                  Supervisor override →
-                </button>
+                {canOverride && (
+                  <button
+                    type="button"
+                    onClick={() => setOverrideOpen(true)}
+                    className="mt-3 bg-red-700 hover:bg-red-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow"
+                  >
+                    Supervisor override →
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
+
+        {/* ── Photo gallery — all photos from the assessment ───────── */}
+        {(() => {
+          const allPhotos = []
+          const collectPhotos = (obj, label) => {
+            if (!obj) return
+            const srcs = Array.isArray(obj.photos) ? obj.photos
+              : obj.photo ? (Array.isArray(obj.photo) ? obj.photo : [obj.photo])
+              : obj.image ? (Array.isArray(obj.image) ? obj.image : [obj.image])
+              : []
+            srcs.forEach((src) => { if (src) allPhotos.push({ src, label }) })
+          }
+
+          // 1. itemResults
+          for (const [code, r] of Object.entries(a.itemResults || {})) {
+            const item = ALL_ITEMS.find((i) => i.code === code)
+            collectPhotos(r, item?.label || code)
+          }
+          // 2. adjustedResults
+          for (const [code, r] of Object.entries(a.adjustedResults || {})) {
+            const item = ALL_ITEMS.find((i) => i.code === code)
+            collectPhotos(r, `${item?.label || code} (adjusted)`)
+          }
+          // 3. pmsData.serviceDetails
+          if (a.pmsData?.serviceDetails) {
+            for (const [code, detail] of Object.entries(a.pmsData.serviceDetails)) {
+              collectPhotos(detail, `PMS: ${code}`)
+            }
+          }
+          // 4. pmsData.updates
+          if (a.pmsData?.updates) {
+            for (const [code, upd] of Object.entries(a.pmsData.updates)) {
+              collectPhotos(upd, `PMS: ${code}`)
+            }
+          }
+          // 5. pmsData.ecuData
+          if (a.pmsData?.ecuData) {
+            collectPhotos(a.pmsData.ecuData, 'ECU Scan')
+            // Trouble codes with individual photos
+            if (Array.isArray(a.pmsData.ecuData.codes)) {
+              a.pmsData.ecuData.codes.forEach((c) => {
+                if (c.photo) allPhotos.push({ src: c.photo, label: `ECU: ${c.code || 'Code'}` })
+              })
+            }
+          }
+
+          if (allPhotos.length === 0) return null
+          return (
+            <Card>
+              <CardTitle>Photos ({allPhotos.length})</CardTitle>
+              <div className="flex gap-2 mt-3 flex-wrap">
+                {allPhotos.map((p, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={p.src}
+                      className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:opacity-80"
+                      alt={p.label}
+                      onClick={() => setLightboxSrc(p.src)}
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] font-bold px-1 py-0.5 rounded-b-lg truncate">
+                      {p.label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )
+        })()}
 
         {/* ── Vehicle & inspection header ─────────────────────────── */}
         <Card>
@@ -270,6 +519,45 @@ export default function AssessmentView() {
                         )}
                       </div>
                       {r.note && <div className="text-xs text-gray-500 italic mt-1">"{r.note}"</div>}
+                      {(() => {
+                        const imgs = Array.isArray(r.photos) ? r.photos
+                          : r.photo ? (Array.isArray(r.photo) ? r.photo : [r.photo])
+                          : r.image ? (Array.isArray(r.image) ? r.image : [r.image])
+                          : []
+                        if (imgs.length === 0) return null
+                        // Fixed items: show before/after side-by-side comparison
+                        if (isResolved && imgs.length >= 2) {
+                          return (
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                              <div>
+                                <div className="text-[9px] font-bold text-red-600 uppercase tracking-wider mb-1">Before</div>
+                                <img src={imgs[0]} className="w-full h-28 rounded-lg object-cover border-2 border-red-200 cursor-pointer hover:shadow-md transition-shadow" alt="Before" onClick={() => setLightboxSrc(imgs[0])} />
+                              </div>
+                              <div>
+                                <div className="text-[9px] font-bold text-green-600 uppercase tracking-wider mb-1">After</div>
+                                <img src={imgs[imgs.length - 1]} className="w-full h-28 rounded-lg object-cover border-2 border-green-200 cursor-pointer hover:shadow-md transition-shadow" alt="After" onClick={() => setLightboxSrc(imgs[imgs.length - 1])} />
+                              </div>
+                              {imgs.length > 2 && (
+                                <div className="col-span-2 flex gap-1.5">
+                                  {imgs.slice(1, -1).map((src, i) => (
+                                    <div key={i}>
+                                      <div className="text-[9px] font-bold text-blue-600 uppercase tracking-wider mb-1">New Part</div>
+                                      <img src={src} className="w-20 h-20 rounded-lg object-cover border-2 border-blue-200 cursor-pointer hover:shadow-md transition-shadow" alt={`New part ${i + 1}`} onClick={() => setLightboxSrc(src)} />
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        }
+                        return (
+                          <div className="flex gap-1.5 mt-2 flex-wrap">
+                            {imgs.map((src, i) => (
+                              <img key={i} src={src} className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md transition-shadow" alt={`Photo ${i + 1}`} onClick={() => setLightboxSrc(src)} />
+                            ))}
+                          </div>
+                        )
+                      })()}
                       {!isResolved && (
                         <div className={`text-[11px] font-semibold mt-1 ${isCrit ? 'text-red-700' : 'text-amber-700'}`}>
                           {ACTION_CFG[getAction(item, r.resultCode)]?.label || ''}
@@ -370,6 +658,38 @@ export default function AssessmentView() {
           onClose={() => setOverrideOpen(false)}
           onSaved={applyOverride}
         />
+      )}
+
+      {/* Photo lightbox */}
+      {/* Export PDF button */}
+      <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-20">
+        <button
+          onClick={exportPdf}
+          className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl"
+        >
+          <Icon name="doc" className="w-4 h-4" />
+          Export PDF
+        </button>
+      </div>
+
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <button
+            onClick={() => setLightboxSrc(null)}
+            className="absolute top-4 right-4 w-10 h-10 bg-white/20 hover:bg-white/30 text-white rounded-full text-2xl font-bold flex items-center justify-center z-50"
+          >
+            ✕
+          </button>
+          <img
+            src={lightboxSrc}
+            className="max-w-full max-h-full object-contain rounded-lg"
+            alt="Full view"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
       )}
     </div>
   )
@@ -502,13 +822,29 @@ function InspectionBreakdown({ itemResults }) {
                     : rc === 'replaced' ? 'text-blue-700'
                     : 'text-gray-400'
                   return (
-                    <div key={item.code} className="flex items-center justify-between text-xs py-0.5">
-                      <span className="text-gray-700 flex-1 pr-2">{item.label}</span>
-                      <span className={`font-semibold ${tone}`}>
-                        {label}
-                        {r.measuredValue !== undefined && r.measuredValue !== '' && ` · ${r.measuredValue}${item.unit || ''}`}
-                        {r.defectCode && ` · ${DEFECT_CODES[r.defectCode] || r.defectCode}`}
-                      </span>
+                    <div key={item.code} className="py-0.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-700 flex-1 pr-2">{item.label}</span>
+                        <span className={`font-semibold ${tone}`}>
+                          {label}
+                          {r.measuredValue !== undefined && r.measuredValue !== '' && ` · ${r.measuredValue}${item.unit || ''}`}
+                          {r.defectCode && ` · ${DEFECT_CODES[r.defectCode] || r.defectCode}`}
+                        </span>
+                      </div>
+                      {r.note && (
+                        <div className="text-[11px] text-gray-500 italic mt-0.5 pl-1">"{r.note}"</div>
+                      )}
+                      {(() => {
+                        const imgs = Array.isArray(r.photos) ? r.photos : r.photo ? (Array.isArray(r.photo) ? r.photo : [r.photo]) : r.image ? (Array.isArray(r.image) ? r.image : [r.image]) : []
+                        if (imgs.length === 0) return null
+                        return (
+                          <div className="flex gap-1.5 mt-1.5 flex-wrap pl-1">
+                            {imgs.map((src, i) => (
+                              <img key={i} src={src} className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md transition-shadow" alt={`Photo ${i + 1}`} onClick={() => setLightboxSrc(src)} />
+                            ))}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })}
@@ -527,6 +863,12 @@ function InspectionBreakdown({ itemResults }) {
 // the user shouldn't be prompted to create a NEW quote; they should
 // be sent back to the existing quote so they can issue the invoice.
 function PostAssessCta({ a }) {
+  const { profile } = useAuth()
+  const role = String(profile?.role || '').toLowerCase()
+  const isWarrior = ['field_assessor', 'warrior', 'dispatcher', 'technician'].includes(role)
+  const isFleetMgr = role === 'general_manager'
+  const cannotCreateQuote = isWarrior || isFleetMgr
+
   const plate = a?.header?.plate || ''
   const [state, setState] = useState({ loading: true, approved: null })
   useEffect(() => {
@@ -548,8 +890,15 @@ function PostAssessCta({ a }) {
     )
   }
 
-  // Existing approved quote → proceed to invoice path.
+  // Existing approved quote → proceed to invoice path (branch users only).
   if (state.approved) {
+    if (cannotCreateQuote) {
+      return (
+        <div className="bg-emerald-50 border rounded-2xl p-4 text-center text-xs text-gray-600">
+          Approved quotation <span className="font-mono font-bold">{state.approved.code}</span> on file for {plate}.
+        </div>
+      )
+    }
     return (
       <div className="bg-white border-2 border-emerald-300 rounded-2xl p-4">
         <div className="flex items-start gap-3">
@@ -575,7 +924,15 @@ function PostAssessCta({ a }) {
     )
   }
 
-  // No approved quote yet → first-time quote creation.
+  // No approved quote yet → first-time quote creation (branch supervisor only).
+  if (cannotCreateQuote) {
+    return (
+      <div className="bg-gray-50 border rounded-2xl p-4 text-center text-xs text-gray-500">
+        Assessment submitted. Awaiting branch supervisor to create the quotation.
+      </div>
+    )
+  }
+
   return (
     <div className="bg-white border-2 border-brand/30 rounded-2xl p-4">
       <div className="flex items-start gap-3">

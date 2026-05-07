@@ -4,10 +4,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { BRANCHES } from '../lib/dummyData'
 import { useAuth } from '../context/AuthContext'
 import { canAssess, canReviewAtBranch, canBookingRequests } from '../lib/roles'
+import { updateAppointmentStatus } from '../lib/appointments'
 
 const WARRIOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
+const CROSS_BRANCH_ROLES = new Set(['general_manager', 'call_center'])
 import { formatDateTime } from '../lib/dummyData'
 import { watchAppointments } from '../lib/appointments'
 import { watchVehicles } from '../lib/vehicles'
@@ -45,7 +48,12 @@ const STATUS_DISPLAY = {
 
 export default function Home() {
   const { profile } = useAuth()
-  const branch = (profile?.branch || 'MGCAVITE').toUpperCase()
+  const role = String(profile?.role || '').toLowerCase().trim()
+  const canSwitchBranch = CROSS_BRANCH_ROLES.has(role)
+  const userBranch = (profile?.branch || '').toUpperCase()
+  const [selectedBranch, setSelectedBranch] = useState(userBranch || BRANCHES[0])
+  const [showBranchPicker, setShowBranchPicker] = useState(false)
+  const branch = canSwitchBranch ? selectedBranch : (userBranch || BRANCHES[0])
   const [view, setView] = useState('card')
   const [filter, setFilter] = useState('ALL')
   const today = new Date()
@@ -62,7 +70,6 @@ export default function Home() {
     return () => { u1?.(); u2?.() }
   }, [])
 
-  const role = String(profile?.role || '').toLowerCase().trim()
   const isWarrior = WARRIOR_ROLES.has(role)
   const myName = (profile?.name || '').toLowerCase().trim()
 
@@ -77,22 +84,58 @@ export default function Home() {
         company: a.company || v?.company || '',
       }
     })
+    let filtered
     // Warriors only see vehicles assigned to them
     if (isWarrior && myName) {
-      return enriched.filter((a) => (a.mechanic || '').toLowerCase().trim() === myName)
+      filtered = enriched.filter((a) => (a.mechanic || '').toLowerCase().trim() === myName)
+    } else {
+      // Filter by selected branch
+      filtered = enriched.filter((a) => {
+        const ab = (a.branch || '').toUpperCase()
+        return ab === branch || !ab
+      })
     }
-    return enriched
-  }, [raw, vehicles, isWarrior, myName])
+    // Filter completed — only show completions from today
+    const todayStr = new Date().toISOString().slice(0, 10)
+    filtered = filtered.filter((a) => {
+      if (a.status !== 'COMPLETED') return true
+      const updatedAt = a.updatedAt?.toDate ? a.updatedAt.toDate() : a.updatedAt ? new Date(a.updatedAt) : null
+      if (!updatedAt || isNaN(updatedAt)) return false
+      return updatedAt.toISOString().slice(0, 10) === todayStr
+    })
+
+    // Deduplicate by plate — keep the most active appointment per plate.
+    // Priority: active statuses first, then most recently updated.
+    const ACTIVE = new Set(['PENDING_BRANCH_APPROVAL', 'BOOKED', 'CONFIRMED', 'TENTATIVE', 'ARRIVED', 'DIAGNOSED', 'ONGOING', 'PENDING'])
+    const byPlate = new Map()
+    for (const a of filtered) {
+      const plate = (a.plateNo || '').toUpperCase()
+      const existing = byPlate.get(plate)
+      if (!existing) { byPlate.set(plate, a); continue }
+      const aActive = ACTIVE.has(a.status)
+      const eActive = ACTIVE.has(existing.status)
+      if (aActive && !eActive) { byPlate.set(plate, a); continue }
+      if (!aActive && eActive) continue
+      // Both active or both inactive — keep more recent
+      const aTime = a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0
+      const eTime = existing.updatedAt?.toMillis?.() || existing.createdAt?.toMillis?.() || 0
+      if (aTime > eTime) byPlate.set(plate, a)
+    }
+    return [...byPlate.values()]
+  }, [raw, vehicles, isWarrior, myName, branch])
 
   // CONFIRMED is what fleet bookings flip to after branch approval; it's
   // functionally identical to BOOKED (scheduled, awaiting arrival), so we
   // collapse both into the same kanban lane to avoid the post-approval
   // gap the user reported.
-  const lane = (status) => (status === 'CONFIRMED' ? 'BOOKED' : status)
+  const lane = (status) => (status === 'CONFIRMED' || status === 'TENTATIVE' ? 'BOOKED' : status)
 
   const byStatus = useMemo(() => {
     const m = Object.fromEntries(STATUS_ORDER.map((s) => [s, []]))
+    const seen = new Set()
     for (const a of appointments) {
+      if (seen.has(a.id)) continue
+      seen.add(a.id)
       const k = lane(a.status)
       if (!m[k]) m[k] = []
       m[k].push(a)
@@ -121,7 +164,34 @@ export default function Home() {
     <div className="pb-20">
       <PageHero
         eyebrow="MY GARAGE"
-        title={branch}
+        title={
+          canSwitchBranch ? (
+            <div className="relative inline-block">
+              <button
+                onClick={() => setShowBranchPicker(!showBranchPicker)}
+                className="flex items-center gap-2 hover:opacity-80"
+              >
+                <span>{branch}</span>
+                <span className="text-white/60 text-lg">⋯</span>
+              </button>
+              {showBranchPicker && (
+                <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-2xl border z-50 min-w-[200px] overflow-hidden">
+                  {BRANCHES.map((b) => (
+                    <button
+                      key={b}
+                      onClick={() => { setSelectedBranch(b); setShowBranchPicker(false) }}
+                      className={`w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 ${
+                        b === branch ? 'bg-brand/10 text-brand font-bold' : 'text-gray-800'
+                      }`}
+                    >
+                      {b}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : branch
+        }
         subtitle={todayLabel}
         right={<HeroStat value={summary.carsInGarage} label="IN GARAGE" tone="solid" />}
       />
@@ -243,7 +313,11 @@ function AppointmentCard({ appt }) {
   const role = profile?.role
   const showAssess = canAssess(role)
   const canAssign = canReviewAtBranch(role) || canBookingRequests(role)
+  const isFleetMgr = String(role).toLowerCase() === 'general_manager'
+  const isBranchUser = canReviewAtBranch(role) && !isFleetMgr
   const isPending = appt.status === 'PENDING_BRANCH_APPROVAL' || appt.status === 'PENDING_BOOKING'
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusError, setStatusError] = useState(null)
 
   const hasMechanic = appt.mechanic && appt.mechanic !== 'Not yet assigned'
   const assessHref = hasMechanic
@@ -252,6 +326,22 @@ function AppointmentCard({ appt }) {
   const assignHref = `/appointments/${appt.id}/assign`
 
   const navigate = useNavigate()
+
+  const [errorModal, setErrorModal] = useState(null)
+  const [assignModal, setAssignModal] = useState(false)
+  const [confirmComplete, setConfirmComplete] = useState(false)
+
+  const moveStatus = async (nextStatus, note, e) => {
+    e.stopPropagation()
+    if (statusBusy) return
+    setStatusBusy(true); setStatusError(null)
+    try { await updateAppointmentStatus(appt.id, nextStatus, note) }
+    catch (err) {
+      console.error('[home] status update failed:', err)
+      setErrorModal(err.message || 'Failed to update status')
+    }
+    finally { setStatusBusy(false) }
+  }
 
   const handleCardClick = () => {
     if (canAssign && !isPending) navigate(assignHref)
@@ -292,14 +382,128 @@ function AppointmentCard({ appt }) {
       <div className="mt-2 text-[10px] text-gray-600 bg-gray-50 rounded-lg px-2 py-1 leading-tight">
         {appt.note ? `"${appt.note}"` : '-'}
       </div>
-      {showAssess && (
+      {showAssess && appt.status !== 'COMPLETED' && (
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); navigate(assessHref) }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!hasMechanic) {
+              setAssignModal(true)
+            } else {
+              navigate(assessHref)
+            }
+          }}
           className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center"
         >
           ASSESS
         </button>
+      )}
+      {isBranchUser && !isPending && (() => {
+        const s = appt.status
+        const btns = []
+        if (s === 'BOOKED' || s === 'CONFIRMED' || s === 'TENTATIVE') {
+          btns.push({ next: 'ARRIVED', label: 'Mark Arrived', note: 'Vehicle arrived', cls: 'bg-sky-100 text-sky-700 hover:bg-sky-200' })
+        }
+        if (s === 'ARRIVED' || s === 'DIAGNOSED') {
+          btns.push({ next: 'ONGOING', label: 'Start Service', note: 'Service started', cls: 'bg-blue-100 text-blue-700 hover:bg-blue-200' })
+        }
+        if (s === 'ONGOING') {
+          btns.push({ next: 'COMPLETED', label: 'Complete', note: 'Service completed', cls: 'bg-green-100 text-green-700 hover:bg-green-200' })
+          btns.push({ next: 'PENDING', label: 'Hold', note: 'Awaiting parts/approval', cls: 'bg-amber-100 text-amber-700 hover:bg-amber-200' })
+        }
+        if (s === 'PENDING') {
+          btns.push({ next: 'ONGOING', label: 'Resume', note: 'Service resumed', cls: 'bg-blue-100 text-blue-700 hover:bg-blue-200' })
+          btns.push({ next: 'COMPLETED', label: 'Complete', note: 'Service completed', cls: 'bg-green-100 text-green-700 hover:bg-green-200' })
+        }
+        if (s === 'COMPLETED') {
+          btns.push({ next: 'ONGOING', label: 'Redo', note: 'Re-opened for additional work', cls: 'bg-red-100 text-red-700 hover:bg-red-200' })
+        }
+        if (btns.length === 0) return null
+        return (
+          <div className="mt-2 grid gap-1" style={{ gridTemplateColumns: `repeat(${btns.length}, 1fr)` }}>
+            {btns.map((b) => (
+              <button key={b.next} disabled={statusBusy} onClick={(e) => {
+                if (b.next === 'COMPLETED') { e.stopPropagation(); setConfirmComplete(true) }
+                else moveStatus(b.next, b.note, e)
+              }}
+                className={`text-[10px] font-bold px-2 py-1.5 rounded-lg disabled:opacity-40 ${b.cls}`}>
+                {statusBusy ? '...' : b.label}
+              </button>
+            ))}
+          </div>
+        )
+      })()}
+      {confirmComplete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-gray-900 mb-2">Mark as Complete</div>
+              <div className="text-sm text-gray-600">Mark <strong>{appt.plateNo}</strong> as service completed?</div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setConfirmComplete(false) }}
+                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={statusBusy}
+                onClick={(e) => { setConfirmComplete(false); moveStatus('COMPLETED', 'Service completed', e) }}
+                className="flex-1 text-sm font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 px-4 py-3 rounded-xl shadow"
+              >
+                {statusBusy ? 'Saving...' : 'Complete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {assignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-amber-700 mb-2">No mechanic assigned</div>
+              <div className="text-sm text-gray-600">No mechanic assigned to <strong>{appt.plateNo}</strong>. Assign one now?</div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setAssignModal(false) }}
+                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setAssignModal(false); navigate(`/appointments/${appt.id}/assign?then=assess`) }}
+                className="flex-1 text-sm font-bold text-white bg-brand hover:bg-brand-dark px-4 py-3 rounded-xl shadow"
+              >
+                Assign Mechanic
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {errorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-red-700 mb-2">Cannot proceed</div>
+              <div className="text-sm text-gray-600">{errorModal}</div>
+            </div>
+            <div className="px-5 pb-5">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setErrorModal(null) }}
+                className="w-full text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

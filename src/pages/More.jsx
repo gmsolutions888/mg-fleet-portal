@@ -132,7 +132,6 @@ function CustomerMenu({ profile }) {
     <>
       <SectionHeader>Fleet</SectionHeader>
       <div className="bg-white divide-y">
-        <Row to="/portal/service-log" icon="doc" label="Service Log" />
         {canServiceQuotation(role) && <Row to="/portal/quotations" icon="doc" label="Service Quotations" badge={forReviewCount} />}
         {canClientInvoice(role) && <Row to="/portal/invoices" icon="doc" label="Service Receipts" />}
         {canClientInvoice(role) && <Row to="/portal/statement" icon="doc" label="Statement of Account" />}

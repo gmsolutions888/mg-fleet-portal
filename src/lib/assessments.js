@@ -43,10 +43,17 @@ export async function getLatestAssessmentForPlate(plateRaw) {
     // Fire one broad query (no composite index needed) and filter client-side.
     // Plate counts are small enough per customer that this is fine.
     const snap = await getDocs(query(collection(db, 'assessments'), orderBy('submittedAt', 'desc')))
+    // First try unresolved
     for (const d of snap.docs) {
       const data = d.data()
       const p = String(data?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
       if (p === plate && !data.resolvedByRwa) return { _docId: d.id, ...data }
+    }
+    // Fallback: return the most recent even if resolved (needed for Re-Assessment)
+    for (const d of snap.docs) {
+      const data = d.data()
+      const p = String(data?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+      if (p === plate) return { _docId: d.id, ...data }
     }
     return null
   } catch (err) {
@@ -357,6 +364,19 @@ export async function createAssessment({ appointmentId, header, itemResults, pms
     link: `/assessments/${rwaNumber}`,
     branch: header.branch || null,
     company: header.client || null,
+  })
+
+  // Notify branch supervisors that assessment is ready for quotation
+  emitNotification({
+    kind: 'quotation',
+    title: `${header.plate} — ready for quotation`,
+    body: `${rwaNumber} · Assessment completed by ${header.technician || 'assessor'} · awaiting quotation`,
+    plateNo: header.plate,
+    appointmentId: appointmentId || null,
+    link: `/assessments/${rwaNumber}`,
+    branch: header.branch || null,
+    company: null,
+    target_roles: ['admin_supervisor', 'admin_assistance', 'operations_manager'],
   })
 
   return { id: ref.id, rwaNumber, classification }

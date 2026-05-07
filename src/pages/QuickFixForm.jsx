@@ -218,6 +218,13 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
         const r = repairs[i.code]
         if (r.skip) continue
         const prev = prevAssessment.itemResults?.[i.code] || {}
+        // Preserve "before" photos from previous assessment, add quick fix photos as "after"
+        const beforePhotos = Array.isArray(prev.photos) ? prev.photos
+          : prev.photo ? (Array.isArray(prev.photo) ? prev.photo : [prev.photo])
+          : []
+        const afterPhotos = r.photos || []
+        // Combine: before photos first, then after photos for side-by-side comparison
+        const combinedPhotos = [...beforePhotos, ...afterPhotos]
         newItemResults[i.code] = {
           resultCode: 'replaced',
           defectCode: prev.defectCode || null,
@@ -226,7 +233,7 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
           partQty: r.qty || 1,
           afterMeasure: r.afterMeasure || undefined,
           note: r.note?.trim() || undefined,
-          photos: r.photos || [],
+          photos: combinedPhotos,
         }
       }
 
@@ -396,8 +403,29 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1.5">
-                      Photos
+                    {(() => {
+                      const prevPhotos = (() => {
+                        const p = prevAssessment?.itemResults?.[item.code]
+                        if (!p) return []
+                        return Array.isArray(p.photos) ? p.photos
+                          : p.photo ? (Array.isArray(p.photo) ? p.photo : [p.photo])
+                          : []
+                      })()
+                      return prevPhotos.length > 0 && (
+                        <div className="mb-3">
+                          <label className="block text-[11px] font-bold uppercase tracking-wider text-red-500 mb-1.5">
+                            Before (from previous assessment)
+                          </label>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {prevPhotos.map((src, i) => (
+                              <img key={i} src={src} className="w-16 h-16 rounded-lg object-cover border-2 border-red-200" alt={`Before ${i + 1}`} />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })()}
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-green-600 mb-1.5">
+                      After Photos
                     </label>
                     <PhotoCapture photos={r.photos || []} onChange={(next) => setPhotos(item.code, next)} />
                   </div>

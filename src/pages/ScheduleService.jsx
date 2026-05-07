@@ -6,7 +6,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { isClientView } from '../lib/roles'
 import { watchVehicles, profileCompany } from '../lib/vehicles'
 import { watchAppointments, requestBooking, updateAppointmentStatus, APPT_STATUS } from '../lib/appointments'
 import { formatDate, formatDateTime } from '../lib/dummyData'
@@ -37,7 +36,6 @@ const REQUESTED_STATUSES = new Set([
 export default function ScheduleService() {
   const { profile } = useAuth()
   const company = (profileCompany(profile) || '').toString()
-  const clientVisibleOnly = isClientView(profile)
 
   const [vehicles, setVehicles] = useState([])
   const [appointments, setAppointments] = useState([])
@@ -52,11 +50,13 @@ export default function ScheduleService() {
 
   useEffect(() => {
     if (!company) return () => {}
-    const unsub = watchVehicles({ company, clientVisibleOnly }, ({ vehicles }) => {
+    // Don't filter by clientVisibleOnly — fleet clients need to see all
+    // their company's vehicles to request service bookings.
+    const unsub = watchVehicles({ company }, ({ vehicles }) => {
       setVehicles(vehicles)
     })
     return unsub
-  }, [company, clientVisibleOnly])
+  }, [company])
 
   useEffect(() => {
     const unsub = watchAppointments({ dummyFallback: false }, ({ rows }) => {
@@ -65,17 +65,24 @@ export default function ScheduleService() {
     return unsub
   }, [])
 
+  const companyMatch = (apptCompany) => {
+    if (!company || !apptCompany) return false
+    const a = apptCompany.toLowerCase().trim()
+    const c = company.toLowerCase().trim()
+    return a === c || a.includes(c) || c.includes(a)
+  }
+
   // All active bookings — used for plate exclusion
   const activeBookings = useMemo(() => {
     return appointments.filter(
-      (a) => ACTIVE_STATUSES.has(a.status) && a.company === company,
+      (a) => ACTIVE_STATUSES.has(a.status) && companyMatch(a.company),
     )
   }, [appointments, company])
 
   // Only pre-approval bookings — shown in "Requested Bookings" section
   const requestedBookings = useMemo(() => {
     return appointments.filter(
-      (a) => REQUESTED_STATUSES.has(a.status) && a.company === company,
+      (a) => REQUESTED_STATUSES.has(a.status) && companyMatch(a.company),
     )
   }, [appointments, company])
 
@@ -197,7 +204,8 @@ export default function ScheduleService() {
       <div className="p-4 sm:p-6">
         <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-md p-4">
           <div className="font-semibold mb-1">No fleet company on your profile</div>
-          Contact your administrator to link your account to a fleet company.
+          <div className="text-xs">Contact your administrator to link your account to a fleet company.</div>
+          <div className="text-[10px] text-gray-500 mt-2">Debug: company_id={profile?.company_id || 'none'} | company={profile?.company || 'none'} | role={profile?.role || 'none'}</div>
         </div>
       </div>
     )
@@ -400,6 +408,9 @@ export default function ScheduleService() {
         {allAvailable.length === 0 && requestedBookings.length === 0 && (
           <div className="bg-white rounded-2xl border border-dashed p-8 text-center text-gray-400 text-sm">
             No vehicles found for your fleet account.
+            <div className="text-[10px] text-gray-400 mt-2">
+              Company: "{company}" | Vehicles loaded: {vehicles.length} | Booked plates: {bookedPlates.size} | Available: {allAvailable.length}
+            </div>
           </div>
         )}
 
