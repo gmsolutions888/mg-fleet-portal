@@ -3,7 +3,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore'
-import { db } from '../lib/firebase'
+import { ref as storageRef, getDownloadURL } from 'firebase/storage'
+import { db, storage } from '../lib/firebase'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
 
@@ -49,6 +50,39 @@ export default function LandingSignups() {
   const [error, setError] = useState(null)
   const [expanded, setExpanded] = useState(null)
   const [search, setSearch] = useState('')
+  const [downloadingKey, setDownloadingKey] = useState(null)
+
+  async function handleDownload(signupId, d) {
+    if (!storage || !d?.storagePath) return
+    const key = `${signupId}::${d.key}`
+    setDownloadingKey(key)
+    try {
+      const url = await getDownloadURL(storageRef(storage, d.storagePath))
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = d.fileName || d.label || d.key || 'document'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(blobUrl)
+    } catch (err) {
+      console.error('[landing-signups] blob download failed:', err, { storagePath: d.storagePath, code: err?.code })
+      // Fallback: open the storage URL in a new tab so the user can save it.
+      try {
+        const url = await getDownloadURL(storageRef(storage, d.storagePath))
+        window.open(url, '_blank', 'noopener,noreferrer')
+      } catch (urlErr) {
+        console.error('[landing-signups] getDownloadURL failed:', urlErr, { storagePath: d.storagePath, code: urlErr?.code })
+        alert(`Could not download file.\n\nPath: ${d.storagePath}\nError: ${urlErr?.code || urlErr?.message || urlErr}`)
+      }
+    } finally {
+      setDownloadingKey(null)
+    }
+  }
 
   useEffect(() => {
     if (!db) { setLoading(false); return }
@@ -156,17 +190,31 @@ export default function LandingSignups() {
 
                 {isOpen && docs.length > 0 && (
                   <div className="border-t px-4 py-3 bg-gray-50 space-y-2">
-                    {docs.map((d) => (
-                      <div key={d.key} className="flex items-center gap-2 text-xs">
-                        <div className="w-7 h-7 rounded bg-red-100 text-red-700 flex items-center justify-center shrink-0">
-                          <Icon name="doc" className="w-4 h-4" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-gray-800 truncate">{d.label || d.key}</div>
-                          <div className="text-gray-400 truncate">{d.fileName || '—'} {d.size ? `· ${formatSize(d.size)}` : ''}</div>
-                        </div>
-                      </div>
-                    ))}
+                    {docs.map((d) => {
+                      const dlKey = `${s.id}::${d.key}`
+                      const isDownloading = downloadingKey === dlKey
+                      const canDownload = Boolean(d.storagePath && storage)
+                      return (
+                        <button
+                          key={d.key}
+                          type="button"
+                          onClick={() => canDownload && handleDownload(s.id, d)}
+                          disabled={!canDownload || isDownloading}
+                          className="w-full flex items-center gap-2 text-xs text-left rounded p-1 -m-1 hover:bg-white disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          <div className="w-7 h-7 rounded bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                            <Icon name="doc" className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-gray-800 truncate">{d.label || d.key}</div>
+                            <div className="text-gray-400 truncate">{d.fileName || '—'} {d.size ? `· ${formatSize(d.size)}` : ''}</div>
+                          </div>
+                          <span className="text-brand text-[11px] font-bold shrink-0">
+                            {isDownloading ? '…' : (canDownload ? 'Download' : '—')}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -219,15 +267,29 @@ export default function LandingSignups() {
                         )}
                         {isOpen && (
                           <div className="mt-2 space-y-1.5">
-                            {docs.map((d) => (
-                              <div key={d.key} className="flex items-center gap-2 text-xs bg-gray-50 rounded px-2 py-1.5">
-                                <Icon name="doc" className="w-3.5 h-3.5 text-red-600 shrink-0" />
-                                <div className="min-w-0">
-                                  <div className="font-semibold text-gray-700 truncate">{d.label || d.key}</div>
-                                  <div className="text-gray-400 truncate">{d.fileName} {d.size ? `· ${formatSize(d.size)}` : ''}</div>
-                                </div>
-                              </div>
-                            ))}
+                            {docs.map((d) => {
+                              const dlKey = `${s.id}::${d.key}`
+                              const isDownloading = downloadingKey === dlKey
+                              const canDownload = Boolean(d.storagePath && storage)
+                              return (
+                                <button
+                                  key={d.key}
+                                  type="button"
+                                  onClick={() => canDownload && handleDownload(s.id, d)}
+                                  disabled={!canDownload || isDownloading}
+                                  className="w-full flex items-center gap-2 text-xs text-left bg-gray-50 hover:bg-gray-100 rounded px-2 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+                                >
+                                  <Icon name="doc" className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold text-gray-700 truncate">{d.label || d.key}</div>
+                                    <div className="text-gray-400 truncate">{d.fileName} {d.size ? `· ${formatSize(d.size)}` : ''}</div>
+                                  </div>
+                                  <span className="text-brand text-[11px] font-bold shrink-0">
+                                    {isDownloading ? '…' : (canDownload ? 'Download' : '—')}
+                                  </span>
+                                </button>
+                              )
+                            })}
                           </div>
                         )}
                       </td>
