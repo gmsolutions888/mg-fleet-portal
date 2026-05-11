@@ -4,15 +4,17 @@
 
 import { useState } from 'react'
 
-const PREVIEW_PASSWORD = import.meta.env.VITE_PREVIEW_PASSWORD || ''
+const PREVIEW_PASSWORD = import.meta.env.VITE_PREVIEW_PASSWORD || 'MGPreview2026!'
 const STORAGE_KEY = 'mgfp:preview-auth'
 
 function isProduction() {
   const host = window.location.hostname
   return host === 'localhost'
+    || host === '127.0.0.1'
     || host === 'mg-fleet-portal-new.vercel.app'
     || host === 'mg-fleet-portal.vercel.app'
-    || !host.includes('vercel.app') // custom domain
+    || host === 'mgfleet.gmsolutions.ph'
+    || !host.includes('vercel.app')
 }
 
 export default function PreviewGate({ children }) {
