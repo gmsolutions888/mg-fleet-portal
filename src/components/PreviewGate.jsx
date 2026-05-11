@@ -9,12 +9,15 @@ const STORAGE_KEY = 'mgfp:preview-auth'
 
 function isProduction() {
   const host = window.location.hostname
-  return host === 'localhost'
-    || host === '127.0.0.1'
-    || host === 'mg-fleet-portal-new.vercel.app'
-    || host === 'mg-fleet-portal.vercel.app'
-    || host === 'mgfleet.gmsolutions.ph'
-    || !host.includes('vercel.app')
+  if (host === 'localhost' || host === '127.0.0.1') return true
+  if (host === 'mgfleet.gmsolutions.ph' || host === 'mgfleetsystem.com' || host === 'www.mgfleetsystem.com') return true
+  // test.mgfleetsystem.com is preview — NOT production
+  if (host === 'test.mgfleetsystem.com') return false
+  // Other custom domains are production
+  if (!host.includes('vercel.app')) return true
+  // Vercel production aliases
+  if (host === 'mg-fleet-portal-new.vercel.app' || host === 'mg-fleet-portal.vercel.app' || host === 'mg-fleet-portal-new-pi.vercel.app') return true
+  return false
 }
 
 export default function PreviewGate({ children }) {
