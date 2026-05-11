@@ -1,5 +1,15 @@
 {
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  ],
+  "build": {
+    "env": {
+      "VITE_FIREBASE_API_KEY": "AIzaSyAybPnwAjnUiNurQ0v_MHpRDW-rnEsFKGU",
+      "VITE_FIREBASE_AUTH_DOMAIN": "mg-fms.firebaseapp.com",
+      "VITE_FIREBASE_PROJECT_ID": "mg-fms",
+      "VITE_FIREBASE_STORAGE_BUCKET": "mg-fms.firebasestorage.app",
+      "VITE_FIREBASE_MESSAGING_SENDER_ID": "925519572545",
+      "VITE_FIREBASE_APP_ID": "1:925519572545:web:ca482b6c31772a2895e0c0"
+    }
+  }
 }
