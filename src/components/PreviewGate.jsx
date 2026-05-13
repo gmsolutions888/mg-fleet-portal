@@ -10,7 +10,7 @@ const STORAGE_KEY = 'mgfp:preview-auth'
 function isProduction() {
   const host = window.location.hostname
   if (host === 'localhost' || host === '127.0.0.1') return true
-  if (host === 'mgfleet.gmsolutions.ph' || host === 'mgfleetsystem.com' || host === 'www.mgfleetsystem.com') return true
+  if (host === 'mgfleet.gmsolutions.ph' || host === 'mgfleetsystem.com' || host === 'www.mgfleetsystem.com' || host === 'portal.mgfleetsystem.com') return true
   // test.mgfleetsystem.com is preview — NOT production
   if (host === 'test.mgfleetsystem.com') return false
   // Other custom domains are production
