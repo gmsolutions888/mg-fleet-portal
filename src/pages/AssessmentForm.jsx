@@ -163,6 +163,8 @@ export default function AssessmentForm() {
       ...h,
       make: h.make || v.brand || '',
       model: h.model || v.model || '',
+      makeId: h.makeId ?? v.caviteMakeId ?? null,
+      modelId: h.modelId ?? v.caviteModelId ?? null,
       yearModel: h.yearModel || v.yearModel || '',
       client: h.client || v.company || '',
       odometer: h.odometer || (v.latestOdo ? String(v.latestOdo) : ''),
@@ -538,7 +540,7 @@ export default function AssessmentForm() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <Field label="Plate">
-            <input id="assess-plate" value={header.plate} onChange={(e) => setHeader((h) => ({ ...h, plate: e.target.value.toUpperCase() }))} className="input w-full uppercase scroll-mt-4" />
+            <input id="assess-plate" value={header.plate} disabled className="input w-full uppercase scroll-mt-4 bg-gray-50" />
           </Field>
           <Field label="Date">
             <input type="date" value={header.date} onChange={(e) => setHeader((h) => ({ ...h, date: e.target.value }))} className="input w-full" />
@@ -564,7 +566,7 @@ export default function AssessmentForm() {
           <Field label="Odometer (km)"><input type="number" value={header.odometer} onChange={(e) => setHeader((h) => ({ ...h, odometer: e.target.value }))} className="input w-full" /></Field>
           <Field label="Client / Fleet"><input value={header.client} disabled className="input w-full bg-gray-50" /></Field>
           <Field label="Branch"><input value={header.branch} disabled className="input w-full bg-gray-50" /></Field>
-          <Field label="Technician"><input id="assess-technician" value={header.technician} onChange={(e) => setHeader((h) => ({ ...h, technician: e.target.value }))} className="input w-full scroll-mt-4" /></Field>
+          <Field label="Technician"><input id="assess-technician" value={header.technician} disabled className="input w-full scroll-mt-4 bg-gray-50" /></Field>
           <Field label="Type">
             <select value={header.type} onChange={(e) => { setHeader((h) => ({ ...h, type: e.target.value })); prefilledKeyRef.current = '' }} className="input w-full">
               {ASSESS_TYPES.map((t) => <option key={t}>{t}</option>)}

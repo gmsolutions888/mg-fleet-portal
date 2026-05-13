@@ -9,8 +9,9 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
-import { MECHANICS, formatMoney } from '../lib/dummyData'
+import { formatMoney } from '../lib/dummyData'
 import { watchVehicles } from '../lib/vehicles'
+import { watchUsers } from '../lib/users'
 import { createReceipt } from '../lib/serviceReceipts'
 import {
   enrichItemsWithCatalogPrices,
@@ -43,11 +44,26 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   // registry effect (below) doesn't clobber the assessor's odometer.
   const [assessmentPrefilled, setAssessmentPrefilled] = useState(false)
 
+  const ASSESSOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
   const [vehicles, setVehicles] = useState([])
+  const [allUsers, setAllUsers] = useState([])
   useEffect(() => {
-    const unsub = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
-    return unsub
+    const u1 = watchVehicles({}, ({ vehicles }) => setVehicles(vehicles))
+    const u2 = watchUsers((list) => setAllUsers(list))
+    return () => { u1?.(); u2?.() }
   }, [])
+
+  const userBranch = (profile?.branch || '').toUpperCase().trim()
+  const mechanicUsers = useMemo(() => {
+    return allUsers
+      .filter((u) => {
+        if (!ASSESSOR_ROLES.has(String(u.role || '').toLowerCase())) return false
+        if (u.is_active === 0) return false
+        if (userBranch) return (u.branch || '').toUpperCase().trim() === userBranch
+        return true
+      })
+      .map((u) => ({ id: u.id, name: u.name || u.email || '—', branch: u.branch || null }))
+  }, [allUsers, userBranch])
 
   const [plate, setPlate] = useState(initialPlate)
   const vehicle = useMemo(
@@ -99,11 +115,14 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   // Round 25a — customer no longer pulled from vehicle.assignedTo
   // (that field used to leak the assessor's name).
   useEffect(() => {
-    if (!vehicle) return
-    if (assessmentPrefilled) return
-    setOdo(vehicle.latestOdo || 0)
+    if (!vehicle || !vehicle.plateNo) return
+    if (vehicle.plateNo !== plate) return
+    if (!assessmentPrefilled) setOdo(vehicle.latestOdo || 0)
+    // Always prefill driver/mobile from vehicle registry
+    if (vehicle.assignedTo) setCustomerName(vehicle.assignedTo)
+    if (vehicle.mobileNo) setMobile(vehicle.mobileNo)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vehicle.plateNo, assessmentPrefilled])
+  }, [vehicle, plate])
 
   // Load the source assessment (if any) and seed line items from it. Runs
   // exactly once per fromAssessment param value. If the assessment is
@@ -366,7 +385,10 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
             <Field label="Assigned Mechanic">
               <select className="input" value={mechanic} onChange={(e) => setMechanic(e.target.value)}>
-                {MECHANICS.map((m) => <option key={m.id}>{m.name}</option>)}
+                <option value="">— select —</option>
+                {mechanicUsers.map((m) => (
+                  <option key={m.id} value={m.name}>{m.name}{m.branch ? ` (${m.branch})` : ''}</option>
+                ))}
               </select>
             </Field>
             <Field label="Total Labor">

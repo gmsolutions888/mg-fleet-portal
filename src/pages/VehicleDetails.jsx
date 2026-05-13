@@ -131,8 +131,8 @@ export default function VehicleDetails() {
               <InfoRow label="Latest Odometer" value={vehicle.latestOdo?.toLocaleString() || '—'} />
               <div className="border-t my-2" />
               <InfoRow label="Assigned To" value={vehicle.assignedTo || '—'} uppercase />
+              <InfoRow label="Mobile No." value={vehicle.mobileNo || '—'} />
               <InfoRow label="Company" value={vehicle.company || '—'} />
-              <InfoRow label="Branch" value={vehicle.branch || '—'} />
             </div>
           </div>
         </Card>

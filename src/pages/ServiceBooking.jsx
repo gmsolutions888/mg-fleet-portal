@@ -226,6 +226,61 @@ export default function ServiceBooking() {
       </div>
 
       <div className="px-3 sm:px-6 pt-5 space-y-5">
+        {/* Pending Approval queue — shown first */}
+        {pendingApproval.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] font-bold uppercase tracking-widest text-amber-700 flex items-center gap-1.5">
+                <Icon name="clock" className="w-3.5 h-3.5" />
+                Pending Branch Approval
+              </div>
+              <span className="text-xs text-gray-400">{pendingApproval.length}</span>
+            </div>
+            {queueError && (
+              <div className="mb-2 bg-red-50 border border-red-200 text-red-800 rounded-xl px-3 py-2 text-xs">
+                Action failed: {queueError}
+              </div>
+            )}
+            <div className="space-y-2">
+              {pendingApproval.map((a) => {
+                const acting = queueActing === a.id
+                return (
+                  <div key={a.id} className="bg-white rounded-2xl border-2 border-amber-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => { setEditId(a.id); setShowPanel(true) }}
+                      className="w-full text-left px-4 py-3 hover:bg-amber-50"
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="bg-amber-500 text-white rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">Pending</div>
+                        <div className="font-black text-sm text-gray-900">{a.plateNo}</div>
+                        <div className="text-xs text-gray-500 uppercase">· {a.customer || '—'}</div>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1.5 break-words">
+                        {a.company}{a.scheduledTime ? ` · ${a.scheduledTime}` : ''}{a.model ? ` · ${a.model}` : ''}{a.yearModel ? ` (${a.yearModel})` : ''}
+                      </div>
+                    </button>
+                    {canReview ? (
+                      <div className="grid grid-cols-2 gap-2 px-4 pb-3">
+                        <button type="button" disabled={acting} onClick={() => onApproveQueue(a.id)}
+                          className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold">
+                          ✓ Approve
+                        </button>
+                        <button type="button" disabled={acting} onClick={() => onRejectQueue(a.id)}
+                          className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold">
+                          ✕ Reject
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="px-4 pb-3 text-[11px] text-gray-400 italic">Awaiting branch reviewer</div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
         {/* Service Center Bookings — time slot day view */}
         <section>
           <div className="flex items-center justify-between mb-2">
@@ -250,72 +305,6 @@ export default function ServiceBooking() {
           </div>
         </section>
 
-        {/* Pending Approval queue */}
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] font-bold uppercase tracking-widest text-amber-700 flex items-center gap-1.5">
-              <Icon name="clock" className="w-3.5 h-3.5" />
-              Pending Branch Approval
-            </div>
-            <span className="text-xs text-gray-400">{pendingApproval.length}</span>
-          </div>
-          {queueError && (
-            <div className="mb-2 bg-red-50 border border-red-200 text-red-800 rounded-xl px-3 py-2 text-xs">
-              Action failed: {queueError}
-            </div>
-          )}
-          {pendingApproval.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-dashed p-5 text-center text-gray-400 text-sm">
-              No fleet bookings waiting for branch approval.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {pendingApproval.map((a) => {
-                const acting = queueActing === a.id
-                return (
-                  <div key={a.id} className="bg-white rounded-2xl border-2 border-amber-200 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => { setEditId(a.id); setShowPanel(true) }}
-                      className="w-full text-left px-4 py-3 hover:bg-amber-50"
-                    >
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="bg-amber-500 text-white rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest">Pending</div>
-                        <div className="font-black text-sm text-gray-900">{a.plateNo}</div>
-                        <div className="text-xs text-gray-500 uppercase">· {a.customer || '—'}</div>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1.5 break-words">
-                        {a.company}{a.scheduledTime ? ` · ${a.scheduledTime}` : ''}{a.model ? ` · ${a.model}` : ''}{a.yearModel ? ` (${a.yearModel})` : ''}
-                      </div>
-                    </button>
-                    {canReview ? (
-                      <div className="grid grid-cols-2 gap-2 px-4 pb-3">
-                        <button
-                          type="button"
-                          disabled={acting}
-                          onClick={() => onApproveQueue(a.id)}
-                          className="text-xs bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold"
-                        >
-                          ✓ Approve
-                        </button>
-                        <button
-                          type="button"
-                          disabled={acting}
-                          onClick={() => onRejectQueue(a.id)}
-                          className="text-xs bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white px-3 py-2.5 rounded-lg font-bold"
-                        >
-                          ✕ Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="px-4 pb-3 text-[11px] text-gray-400 italic">Awaiting branch reviewer</div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </section>
       </div>
 
       {/* Floating + New Booking — only for fleet manager and call center */}
@@ -454,12 +443,26 @@ function BookingForm({ editId, branch, appointments, vehicles, fleetCompanies, a
     return vehicles.find((v) => v.plateNo === up) || null
   }, [plate, vehicles])
 
+  // Auto-fill customer and mobile from matched vehicle — vehicle's assignedTo
+  // takes priority over the booking request's customer name
+  useEffect(() => {
+    if (!matchedVehicle) return
+    if (matchedVehicle.assignedTo) setCustomer(matchedVehicle.assignedTo)
+    if (matchedVehicle.mobileNo) setMobile(matchedVehicle.mobileNo)
+    if (matchedVehicle.company) {
+      setCustType('fleet')
+      setCompany(matchedVehicle.company)
+    }
+  }, [matchedVehicle]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const onPickPlate = (v) => {
     setPlate(v.plateNo)
     if (v.company) {
       setCustType('fleet')
       setCompany(v.company)
     }
+    if (v.assignedTo) setCustomer(v.assignedTo)
+    if (v.mobileNo) setMobile(v.mobileNo)
   }
 
   const onStatusAction = async (nextStatus, note) => {
@@ -725,10 +728,7 @@ function BookingForm({ editId, branch, appointments, vehicles, fleetCompanies, a
 
       {custType === 'fleet' && (
         <Row label="Fleet Company">
-          <select value={company} onChange={(e) => setCompany(e.target.value)} className="input w-full" required>
-            <option value="">— select —</option>
-            {fleetCompanies.map((c) => <option key={c.id} value={c.code}>{c.name}</option>)}
-          </select>
+          <input value={company || '—'} disabled className="input w-full bg-gray-50" />
         </Row>
       )}
 

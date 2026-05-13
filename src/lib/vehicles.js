@@ -179,7 +179,7 @@ function toVehicle(assessment, pmsRecord) {
     // assessor's name appear as the customer on every invoice. Until we
     // capture a real driver name on bookings, leave this empty so the
     // quote create page doesn't auto-stuff a wrong value.
-    assignedTo: '',
+    assignedTo: assessment?.vehicleMeta?.assignedTo || '',
     latestOdo: odo,
     roadworthy: bucket,
     company: h.client || null,
@@ -191,6 +191,10 @@ function toVehicle(assessment, pmsRecord) {
     overdueDays: overdueDays(nextPms),
     classification: cls,
     supervisorCleared: Boolean(assessment?.supervisorCleared),
+    mobileNo: assessment?.vehicleMeta?.mobileNo || null,
+    color: assessment?.vehicleMeta?.color || h.color || null,
+    transmission: assessment?.vehicleMeta?.transmission || h.transmission || null,
+    engineNo: assessment?.vehicleMeta?.engineNo || h.engineNo || null,
     _raw: assessment,
   }
 }
@@ -222,9 +226,27 @@ export function watchVehicles(options, cb) {
       ? assessments.filter((a) => isVisibleToClient(a?.review_status))
       : assessments
     const latest = latestByPlate(visible)
+    // Build a vehicleMeta lookup — any assessment with vehicleMeta wins
+    const metaByPlate = {}
+    for (const a of visible) {
+      if (a.vehicleMeta) {
+        const p = normalizePlate(a?.header?.plate)
+        if (!metaByPlate[p]) metaByPlate[p] = a.vehicleMeta
+      }
+    }
     let rows = []
     for (const [plate, a] of latest) {
-      rows.push(toVehicle(a, pms[plate]))
+      const v = toVehicle(a, pms[plate])
+      // Merge vehicleMeta from registration if latest assessment doesn't have it
+      const meta = metaByPlate[plate]
+      if (meta) {
+        if (!v.assignedTo && meta.assignedTo) v.assignedTo = meta.assignedTo
+        if (!v.mobileNo && meta.mobileNo) v.mobileNo = meta.mobileNo
+        if (!v.color && meta.color) v.color = meta.color
+        if (!v.transmission && meta.transmission) v.transmission = meta.transmission
+        if (!v.engineNo && meta.engineNo) v.engineNo = meta.engineNo
+      }
+      rows.push(v)
     }
     if (options?.company) {
       const target = String(options.company).toLowerCase().trim()
@@ -303,6 +325,15 @@ export async function loadVehicleWithHistory(plateRaw, options = {}) {
     const pmsSnap = await getDoc(doc(db, 'pms_records', originalPlate))
     const pmsRecord = pmsSnap.exists() ? pmsSnap.data() : null
     const vehicle = toVehicle(matching[0], pmsRecord)
+    // Merge vehicleMeta from any assessment (e.g. registration) if latest doesn't have it
+    const meta = matching.find((a) => a.vehicleMeta)?.vehicleMeta
+    if (meta) {
+      if (!vehicle.assignedTo && meta.assignedTo) vehicle.assignedTo = meta.assignedTo
+      if (!vehicle.mobileNo && meta.mobileNo) vehicle.mobileNo = meta.mobileNo
+      if (!vehicle.color && meta.color) vehicle.color = meta.color
+      if (!vehicle.transmission && meta.transmission) vehicle.transmission = meta.transmission
+      if (!vehicle.engineNo && meta.engineNo) vehicle.engineNo = meta.engineNo
+    }
     const history = buildHistoryFromAssessments(matching, pmsRecord)
     return { vehicle, history, source: 'firestore' }
   } catch (err) {
@@ -314,9 +345,9 @@ export async function loadVehicleWithHistory(plateRaw, options = {}) {
 function buildHistoryFromAssessments(assessments /* , pmsRecord */) {
   // One row per assessment / RWA, matching the MG-FMS "Assessment History"
   // card list in mg-fms-app/src/App.jsx:517.
-  const sorted = [...assessments].sort(
-    (x, y) => Date.parse(y.submittedAt || 0) - Date.parse(x.submittedAt || 0),
-  )
+  const sorted = [...assessments]
+    .filter((a) => !a._vehicleRegistration) // exclude registration-only entries
+    .sort((x, y) => Date.parse(y.submittedAt || 0) - Date.parse(x.submittedAt || 0))
   return sorted.map((a, i) => {
     const h = a?.header || {}
     const cls = a?.classification || {}

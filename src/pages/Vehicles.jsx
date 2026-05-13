@@ -3,9 +3,15 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
+import { auth, db } from '../lib/firebase'
+import { useAuth } from '../context/AuthContext'
 import { watchVehicles, formatDate } from '../lib/vehicles'
+import { watchFleetCompanies } from '../lib/fleetCompanies'
+import { getAllBrands, getAllModels } from '../lib/refVehicles'
 import RoadworthyBadge from '../components/ui/RoadworthyBadge'
 import VehicleImage from '../components/ui/VehicleImage'
+import SlidePanel from '../components/ui/SlidePanel'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
 
@@ -17,23 +23,35 @@ const ROADWORTHY_TABS = [
 ]
 
 export default function Vehicles() {
+  const { profile } = useAuth()
   const [vehicles, setVehicles] = useState([])
   const [source, setSource] = useState('loading')
   const [search, setSearch] = useState('')
   const [company, setCompany] = useState('ALL')
   const [roadworthy, setRoadworthy] = useState('ALL')
+  const [showAdd, setShowAdd] = useState(false)
+  const [editVehicle, setEditVehicle] = useState(null)
+  const [fleetCompanies, setFleetCompanies] = useState([])
 
   useEffect(() => {
-    const unsub = watchVehicles({}, ({ vehicles, source }) => {
+    const u1 = watchVehicles({}, ({ vehicles, source }) => {
       setVehicles(vehicles); setSource(source)
     })
-    return unsub
+    const u2 = watchFleetCompanies((list) => setFleetCompanies(list))
+    return () => { u1?.(); u2?.() }
   }, [])
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
     return vehicles.filter((v) => {
-      if (company !== 'ALL' && (v.company || 'WALK-IN') !== company) return false
+      if (company !== 'ALL') {
+        if (company === 'WALK-IN') { if (v.company) return false }
+        else {
+          const vc = (v.company || '').toLowerCase().trim()
+          const cf = company.toLowerCase().trim()
+          if (!(vc === cf || vc.includes(cf) || cf.includes(vc))) return false
+        }
+      }
       if (roadworthy !== 'ALL' && v.roadworthy !== roadworthy) return false
       if (!term) return true
       return [v.plateNo, v.brandModel, v.yearModel, v.assignedTo].join(' ').toLowerCase().includes(term)
@@ -99,7 +117,10 @@ export default function Vehicles() {
           </div>
           <select value={company} onChange={(e) => setCompany(e.target.value)} className="input">
             <option value="ALL">All companies</option>
-            {companies.map((c) => <option key={c} value={c}>{c}</option>)}
+            {fleetCompanies.map((c) => (
+              <option key={c.id} value={c.name}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+            ))}
+            <option value="WALK-IN">Walk-in</option>
           </select>
         </div>
 
@@ -117,12 +138,12 @@ export default function Vehicles() {
             <table className="min-w-full text-sm whitespace-nowrap">
               <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-600">
                 <tr>
+                  <th className="px-4 py-3 text-center font-medium w-10"></th>
                   <th className="px-4 py-3 text-left font-medium">Plate No</th>
                   <th className="px-4 py-3 text-left font-medium">Brand/Model</th>
                   <th className="px-4 py-3 text-left font-medium">Year</th>
-                  <th className="px-4 py-3 text-left font-medium">Technician</th>
                   <th className="px-4 py-3 text-left font-medium">Company</th>
-                  <th className="px-4 py-3 text-left font-medium">Branch</th>
+                  <th className="px-4 py-3 text-left font-medium">Assigned To</th>
                   <th className="px-4 py-3 text-right font-medium">Odo</th>
                   <th className="px-4 py-3 text-left font-medium">Next PMS</th>
                   <th className="px-4 py-3 text-left font-medium">Roadworthy</th>
@@ -134,16 +155,24 @@ export default function Vehicles() {
                 )}
                 {rows.map((v, i) => (
                   <tr key={v.plateNo + i} className="hover:bg-gray-50">
+                    <td className="px-4 py-2 text-center">
+                      <button onClick={() => setEditVehicle(v)} className="text-gray-400 hover:text-brand text-[10px] font-bold">Edit</button>
+                    </td>
                     <td className="px-4 py-2">
                       <Link to={`/vehicles/${v.plateNo}`} className="text-brand font-semibold hover:underline">{v.plateNo}</Link>
                     </td>
                     <td className="px-4 py-2">{v.brandModel}</td>
                     <td className="px-4 py-2">{v.yearModel}</td>
-                    <td className="px-4 py-2 uppercase">{v.assignedTo || '—'}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{v.company || 'WALK-IN'}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-600">{v.branch || '—'}</td>
+                    <td className="px-4 py-2 text-xs text-gray-600">{v.company || 'WALK-IN'}</td>
+                    <td className="px-4 py-2">
+                      <div className="uppercase text-sm">{v.assignedTo || '—'}</div>
+                      {v.mobileNo && <div className="text-[10px] text-gray-400">{v.mobileNo}</div>}
+                    </td>
                     <td className="px-4 py-2 text-right">{v.latestOdo?.toLocaleString() || '-'}</td>
-                    <td className="px-4 py-2">{formatDate(v.nextPms)}</td>
+                    <td className="px-4 py-2">
+                      <div>{formatDate(v.nextPms)}</div>
+                      {v.branch && <div className="text-[10px] text-gray-400">{v.branch}</div>}
+                    </td>
                     <td className="px-4 py-2"><RoadworthyBadge status={v.roadworthy} size="sm" /></td>
                   </tr>
                 ))}
@@ -154,11 +183,361 @@ export default function Vehicles() {
       </div>
 
       <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-6 z-20">
-        <button className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl">
+        <button
+          onClick={() => setShowAdd(true)}
+          className="bg-brand hover:bg-brand-dark text-white px-4 sm:px-5 py-3 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl"
+        >
           <Icon name="plus" className="w-4 h-4" />
           Add Vehicle
         </button>
       </div>
+
+      <SlidePanel open={showAdd} onClose={() => setShowAdd(false)} title="Add Vehicle">
+        <AddVehicleForm
+          profile={profile}
+          fleetCompanies={fleetCompanies}
+          vehicles={vehicles}
+          onClose={() => setShowAdd(false)}
+        />
+      </SlidePanel>
+
+      <SlidePanel open={Boolean(editVehicle)} onClose={() => setEditVehicle(null)} title="Edit Vehicle">
+        {editVehicle && (
+          <EditVehicleForm
+            vehicle={editVehicle}
+            fleetCompanies={fleetCompanies}
+            onClose={() => setEditVehicle(null)}
+          />
+        )}
+      </SlidePanel>
+    </div>
+  )
+}
+
+function AddVehicleForm({ profile, fleetCompanies, vehicles, onClose }) {
+  const [form, setForm] = useState({
+    plateNo: '',
+    make: '',
+    model: '',
+    yearModel: '',
+    odometer: '',
+    company: '',
+    assignedTo: '',
+    mobileNo: '',
+    color: '',
+    transmission: '',
+    engineNo: '',
+  })
+  const [brands, setBrands] = useState([])
+  const [models, setModels] = useState([])
+  const [filteredModels, setFilteredModels] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+  const [plateError, setPlateError] = useState(null)
+
+  useEffect(() => {
+    getAllBrands().then(setBrands)
+    getAllModels().then(setModels)
+  }, [])
+
+  const update = (field, value) => {
+    setForm((f) => ({ ...f, [field]: value }))
+    if (field === 'plateNo') {
+      const plate = value.toUpperCase().replace(/\s+/g, '')
+      const exists = vehicles.some((v) => v.plateNo === plate)
+      setPlateError(exists ? 'This plate number already exists' : null)
+    }
+    if (field === 'make') {
+      const brand = brands.find((b) => b.name === value)
+      const makeId = brand?.caviteId
+      setFilteredModels(makeId ? models.filter((m) => m.caviteMakeId === makeId) : [])
+      setForm((f) => ({ ...f, make: value, model: '' }))
+      return
+    }
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.plateNo.trim()) return
+    const plate = form.plateNo.toUpperCase().replace(/\s+/g, '')
+    if (vehicles.some((v) => v.plateNo === plate)) {
+      setPlateError('This plate number already exists')
+      return
+    }
+    setSaving(true); setError(null)
+    try {
+      const brand = brands.find((b) => b.name === form.make)
+      const model = models.find((m) => m.name === form.model && m.caviteMakeId === brand?.caviteId)
+      await addDoc(collection(db, 'assessments'), {
+        id: Date.now(),
+        rwaNumber: `RWA-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+        header: {
+          plate,
+          make: form.make.trim(),
+          model: form.model.trim(),
+          yearModel: form.yearModel.trim(),
+          makeId: brand?.caviteId || null,
+          modelId: model?.caviteId || null,
+          client: form.company || null,
+          branch: profile?.branch || null,
+          technician: profile?.name || 'System',
+          odometer: Number(form.odometer) || 0,
+          type: 'Initial',
+          date: new Date().toISOString().slice(0, 10),
+        },
+        itemResults: {},
+        classification: { overallStatus: 'active', dispatchAllowed: true, failCriticalCount: 0, monitorCount: 0, totalBlockerCount: 0 },
+        fmsStatus: 'synced',
+        submittedAt: new Date().toISOString(),
+        review_status: 'SENT_TO_CLIENT',
+        createdBy: auth?.currentUser?.uid || null,
+        _vehicleRegistration: true,
+        vehicleMeta: {
+          assignedTo: form.assignedTo.trim() || null,
+          mobileNo: form.mobileNo.trim() || null,
+          color: form.color.trim() || null,
+          transmission: form.transmission || null,
+          engineNo: form.engineNo.trim() || null,
+        },
+      })
+      onClose()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4 text-sm">
+      {error && <div className="bg-red-50 border border-red-200 text-red-800 rounded px-3 py-2 text-xs">{error}</div>}
+
+      <Row label="Plate No. *">
+        <input value={form.plateNo} onChange={(e) => update('plateNo', e.target.value.toUpperCase())} required className="input uppercase" placeholder="e.g. ABC1234" />
+        {plateError && <div className="text-xs text-red-600 font-semibold mt-1">{plateError}</div>}
+      </Row>
+
+      <Row label="Make *">
+        <select value={form.make} onChange={(e) => update('make', e.target.value)} required className="input">
+          <option value="">— select make —</option>
+          {brands.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Model *">
+        <select value={form.model} onChange={(e) => update('model', e.target.value)} required className="input" disabled={!form.make}>
+          <option value="">— select model —</option>
+          {filteredModels.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Year Model">
+        <input value={form.yearModel} onChange={(e) => update('yearModel', e.target.value)} className="input" placeholder="e.g. 2024" />
+      </Row>
+
+      <Row label="Latest Odometer (km)">
+        <input type="number" value={form.odometer} onChange={(e) => update('odometer', e.target.value)} className="input" placeholder="e.g. 15000" />
+      </Row>
+
+      <Row label="Fleet Company">
+        <select value={form.company} onChange={(e) => update('company', e.target.value)} className="input">
+          <option value="">— none (walk-in) —</option>
+          {fleetCompanies.map((c) => (
+            <option key={c.id} value={c.name}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+          ))}
+        </select>
+      </Row>
+
+      <Row label="Assigned To">
+        <input value={form.assignedTo} onChange={(e) => update('assignedTo', e.target.value)} className="input" placeholder="e.g. Juan Dela Cruz" />
+      </Row>
+
+      <Row label="Mobile No.">
+        <input value={form.mobileNo} onChange={(e) => update('mobileNo', e.target.value)} className="input" placeholder="e.g. 09171234567" />
+      </Row>
+
+      <Row label="Color">
+        <input value={form.color} onChange={(e) => update('color', e.target.value)} className="input" placeholder="e.g. White" />
+      </Row>
+
+      <Row label="Transmission">
+        <select value={form.transmission} onChange={(e) => update('transmission', e.target.value)} className="input">
+          <option value="">— select —</option>
+          <option>Manual</option>
+          <option>Automatic</option>
+          <option>CVT</option>
+        </select>
+      </Row>
+
+      <Row label="Engine No.">
+        <input value={form.engineNo} onChange={(e) => update('engineNo', e.target.value)} className="input" placeholder="Optional" />
+      </Row>
+
+      <div className="pt-2 flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded font-semibold">Cancel</button>
+        <button type="submit" disabled={saving || Boolean(plateError)} className="text-sm bg-brand hover:bg-brand-dark disabled:opacity-50 text-white px-5 py-2 rounded font-semibold">
+          {saving ? 'Saving…' : 'Add Vehicle'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function EditVehicleForm({ vehicle, fleetCompanies, onClose }) {
+  const raw = vehicle._raw || {}
+  const meta = raw.vehicleMeta || {}
+  const [form, setForm] = useState({
+    make: vehicle.brand || '',
+    model: vehicle.model || '',
+    yearModel: vehicle.yearModel || '',
+    odometer: vehicle.latestOdo || '',
+    company: vehicle.company || '',
+    assignedTo: vehicle.assignedTo || '',
+    mobileNo: vehicle.mobileNo || '',
+    color: vehicle.color || '',
+    transmission: vehicle.transmission || '',
+    engineNo: vehicle.engineNo || '',
+  })
+  const [brands, setBrands] = useState([])
+  const [models, setModels] = useState([])
+  const [filteredModels, setFilteredModels] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    getAllBrands().then((b) => {
+      setBrands(b)
+      getAllModels().then((m) => {
+        setModels(m)
+        const brand = b.find((br) => br.name === form.make)
+        if (brand) setFilteredModels(m.filter((md) => md.caviteMakeId === brand.caviteId))
+      })
+    })
+  }, [])
+
+  const update = (field, value) => {
+    if (field === 'make') {
+      const brand = brands.find((b) => b.name === value)
+      setFilteredModels(brand ? models.filter((m) => m.caviteMakeId === brand.caviteId) : [])
+      setForm((f) => ({ ...f, make: value, model: '' }))
+      return
+    }
+    setForm((f) => ({ ...f, [field]: value }))
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!raw._docId) { setError('Cannot find assessment doc to update'); return }
+    setSaving(true); setError(null)
+    try {
+      const { doc: docRef, updateDoc: updDoc, serverTimestamp: srvTs } = await import('firebase/firestore')
+      const { db: fireDb } = await import('../lib/firebase')
+      const brand = brands.find((b) => b.name === form.make)
+      const model = models.find((m) => m.name === form.model && m.caviteMakeId === brand?.caviteId)
+      await updDoc(docRef(fireDb, 'assessments', raw._docId), {
+        'header.make': form.make.trim(),
+        'header.model': form.model.trim(),
+        'header.yearModel': form.yearModel.trim(),
+        'header.odometer': Number(form.odometer) || 0,
+        'header.client': form.company || null,
+        'header.makeId': brand?.caviteId || null,
+        'header.modelId': model?.caviteId || null,
+        vehicleMeta: {
+          assignedTo: form.assignedTo.trim() || null,
+          mobileNo: form.mobileNo.trim() || null,
+          color: form.color.trim() || null,
+          transmission: form.transmission || null,
+          engineNo: form.engineNo.trim() || null,
+        },
+        updatedAt: srvTs(),
+      })
+      onClose()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-4 text-sm">
+      {error && <div className="bg-red-50 border border-red-200 text-red-800 rounded px-3 py-2 text-xs">{error}</div>}
+
+      <Row label="Plate No.">
+        <input value={vehicle.plateNo} disabled className="input bg-gray-50" />
+      </Row>
+
+      <Row label="Make *">
+        <select value={form.make} onChange={(e) => update('make', e.target.value)} required className="input">
+          <option value="">— select make —</option>
+          {brands.map((b) => <option key={b.id} value={b.name}>{b.name}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Model *">
+        <select value={form.model} onChange={(e) => update('model', e.target.value)} required className="input" disabled={!form.make}>
+          <option value="">— select model —</option>
+          {filteredModels.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+        </select>
+      </Row>
+
+      <Row label="Year Model">
+        <input value={form.yearModel} onChange={(e) => update('yearModel', e.target.value)} className="input" />
+      </Row>
+
+      <Row label="Latest Odometer (km)">
+        <input type="number" value={form.odometer} onChange={(e) => update('odometer', e.target.value)} className="input" />
+      </Row>
+
+      <Row label="Fleet Company">
+        <select value={form.company} onChange={(e) => update('company', e.target.value)} className="input">
+          <option value="">— none (walk-in) —</option>
+          {fleetCompanies.map((c) => (
+            <option key={c.id} value={c.name}>{c.name}{c.code ? ` (${c.code})` : ''}</option>
+          ))}
+        </select>
+      </Row>
+
+      <Row label="Assigned To">
+        <input value={form.assignedTo} onChange={(e) => update('assignedTo', e.target.value)} className="input" />
+      </Row>
+
+      <Row label="Mobile No.">
+        <input value={form.mobileNo} onChange={(e) => update('mobileNo', e.target.value)} className="input" />
+      </Row>
+
+      <Row label="Color">
+        <input value={form.color} onChange={(e) => update('color', e.target.value)} className="input" />
+      </Row>
+
+      <Row label="Transmission">
+        <select value={form.transmission} onChange={(e) => update('transmission', e.target.value)} className="input">
+          <option value="">— select —</option>
+          <option>Manual</option>
+          <option>Automatic</option>
+          <option>CVT</option>
+        </select>
+      </Row>
+
+      <Row label="Engine No.">
+        <input value={form.engineNo} onChange={(e) => update('engineNo', e.target.value)} className="input" />
+      </Row>
+
+      <div className="pt-2 flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="text-sm text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded font-semibold">Cancel</button>
+        <button type="submit" disabled={saving} className="text-sm bg-brand hover:bg-brand-dark disabled:opacity-50 text-white px-5 py-2 rounded font-semibold">
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function Row({ label, children }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      {children}
     </div>
   )
 }
