@@ -21,7 +21,7 @@ import {
   QUOT_STATUS, effectiveQuotationStatus, watchReceipts,
 } from '../lib/serviceReceipts'
 
-export default function ClientBillingSnapshot({ company }) {
+export default function ClientBillingSnapshot({ company, officerPlates }) {
   const [invoices, setInvoices] = useState([])
   const [quotations, setQuotations] = useState([])
   const [now, setNow] = useState(new Date())
@@ -39,13 +39,24 @@ export default function ClientBillingSnapshot({ company }) {
     return () => { u1?.(); u2?.() }
   }, [company])
 
+  // Filter by officer plates if scoped
+  const scopedInvoices = useMemo(() => {
+    if (!officerPlates) return invoices
+    return invoices.filter((inv) => officerPlates.has((inv.plateNo || '').toUpperCase()))
+  }, [invoices, officerPlates])
+
+  const scopedQuotations = useMemo(() => {
+    if (!officerPlates) return quotations
+    return quotations.filter((q) => officerPlates.has((q.plateNo || '').toUpperCase()))
+  }, [quotations, officerPlates])
+
   const stats = useMemo(() => {
     let openCount = 0
     let openTotal = 0
     let overdueCount = 0
     let overdueTotal = 0
     let paidCount = 0
-    for (const inv of invoices) {
+    for (const inv of scopedInvoices) {
       if (inv.status === CLIENT_INVOICE_STATUS.OPEN) {
         const bal = Number(inv.balanceDue ?? inv.total) || 0
         openCount++
@@ -59,13 +70,13 @@ export default function ClientBillingSnapshot({ company }) {
       }
     }
     let pendingApprovalCount = 0
-    for (const q of quotations) {
+    for (const q of scopedQuotations) {
       if (effectiveQuotationStatus(q) === QUOT_STATUS.FOR_CLIENT_REVIEW) {
         pendingApprovalCount++
       }
     }
     return { openCount, openTotal, overdueCount, overdueTotal, paidCount, pendingApprovalCount }
-  }, [invoices, quotations, now])
+  }, [scopedInvoices, scopedQuotations, now])
 
   const allClear = stats.openCount === 0 && stats.pendingApprovalCount === 0
 

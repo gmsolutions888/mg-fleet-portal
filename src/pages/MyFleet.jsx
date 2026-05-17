@@ -4,9 +4,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { collection, doc, getDocs, query, serverTimestamp, updateDoc } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 import { useAuth } from '../context/AuthContext'
 import { isClientView } from '../lib/roles'
-import { watchVehicles, profileCompany } from '../lib/vehicles'
+import { watchVehicles, profileCompany, isOfficerScoped } from '../lib/vehicles'
+import { watchUsers } from '../lib/users'
 import { watchAppointments, APPT_STATUS } from '../lib/appointments'
 import { fleetStats, pmStats, formatDate, formatDateTime } from '../lib/dummyData'
 import RoadworthyBadge from '../components/ui/RoadworthyBadge'
@@ -26,8 +29,28 @@ export default function MyFleet() {
   const [error, setError] = useState(null)
 
   const clientVisibleOnly = isClientView(profile)
+  const isManager = String(profile?.role || '').toLowerCase() === 'fleet_client_manager'
+  const officerScoped = isOfficerScoped(profile)
+  const uid = profile?.id || null
 
   const [appointments, setAppointments] = useState([])
+  const [allUsers, setAllUsers] = useState([])
+  const [officerFilter, setOfficerFilter] = useState('ALL')
+  const [selected, setSelected] = useState(new Set())
+  const [showBulkAssign, setShowBulkAssign] = useState(false)
+  const [singleAssign, setSingleAssign] = useState(null)
+
+  const fleetUsers = useMemo(() => {
+    return allUsers
+      .filter((u) => String(u.role || '').toLowerCase() === 'fleet_client' && u.is_active !== 0)
+      .filter((u) => {
+        if (!company) return true
+        const uc = (u.company_id || u.company || '').toLowerCase().trim()
+        const cf = company.toLowerCase().trim()
+        return uc === cf || uc.includes(cf) || cf.includes(uc)
+      })
+      .map((u) => ({ id: u.id, name: u.name || u.email || '—', email: u.email || '' }))
+  }, [allUsers, company])
 
   useEffect(() => {
     if (!company) { setVehicles([]); setSource('no-company'); setLoading(false); return () => {} }
@@ -38,7 +61,8 @@ export default function MyFleet() {
       },
     )
     const u2 = watchAppointments({ dummyFallback: false }, ({ rows }) => setAppointments(rows))
-    return () => { u1?.(); u2?.() }
+    const u3 = isManager ? watchUsers((list) => setAllUsers(list)) : null
+    return () => { u1?.(); u2?.(); u3?.() }
   }, [company, clientVisibleOnly])
 
   // Enrich vehicles with booked schedule from active appointments
@@ -58,7 +82,7 @@ export default function MyFleet() {
         apptByPlate[plate] = a
       }
     }
-    return vehicles.map((v) => {
+    let result = vehicles.map((v) => {
       const appt = apptByPlate[(v.plateNo || '').toUpperCase()]
       if (!appt) return v
       return {
@@ -68,7 +92,17 @@ export default function MyFleet() {
         bookedStatus: appt.status || null,
       }
     })
-  }, [vehicles, appointments, company])
+    // Fleet client users only see their assigned vehicles
+    if (officerScoped && uid) {
+      result = result.filter((v) => v.fleetOfficerId === uid)
+    }
+    // Fleet client manager: apply officer filter dropdown
+    if (isManager && officerFilter !== 'ALL') {
+      if (officerFilter === 'UNASSIGNED') result = result.filter((v) => !v.fleetOfficerId)
+      else result = result.filter((v) => v.fleetOfficerId === officerFilter)
+    }
+    return result
+  }, [vehicles, appointments, company, officerScoped, isManager, officerFilter, uid])
 
   if (!company) {
     return (
@@ -113,6 +147,17 @@ export default function MyFleet() {
       )}
 
       <div className="px-3 sm:px-6 pt-5 space-y-4">
+        {/* Fleet officer filter — manager only */}
+        {isManager && fleetUsers.length > 0 && (
+          <select value={officerFilter} onChange={(e) => setOfficerFilter(e.target.value)} className="input max-w-xs">
+            <option value="ALL">All Fleet Officers</option>
+            <option value="UNASSIGNED">Unassigned</option>
+            {fleetUsers.map((u) => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+        )}
+
         {/* PM quick stats in compact row */}
         <div className="grid grid-cols-3 gap-2">
           <PmTile label="Due this month"      value={pm.dueThisMonth} />
@@ -121,9 +166,110 @@ export default function MyFleet() {
         </div>
 
         {/* Mobile: card list. Desktop: keep the existing dense table. */}
-        <MobileList vehicles={enrichedVehicles} loading={loading} />
+        <MobileList vehicles={enrichedVehicles} loading={loading} isManager={isManager} onAssign={setSingleAssign} />
         <div className="hidden lg:block">
-          <FleetTable vehicles={enrichedVehicles} loading={loading} />
+          <FleetTable vehicles={enrichedVehicles} loading={loading} isManager={isManager} selected={selected} onToggle={(p) => setSelected((s) => { const n = new Set(s); if (n.has(p)) n.delete(p); else n.add(p); return n })} onSelectAll={() => setSelected((s) => s.size === enrichedVehicles.length ? new Set() : new Set(enrichedVehicles.map((v) => v.plateNo)))} onAssign={setSingleAssign} />
+        </div>
+      </div>
+
+      {/* Bulk assign bar — manager only */}
+      {isManager && selected.size > 0 && (
+        <div className="fixed bottom-16 md:bottom-0 left-0 right-0 z-30 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center justify-between gap-3">
+          <div className="text-sm text-gray-700">
+            <span className="font-black text-lg text-brand">{selected.size}</span> vehicle{selected.size === 1 ? '' : 's'} selected
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setSelected(new Set())} className="text-sm text-gray-500 bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded-lg font-bold">Clear</button>
+            <button onClick={() => setShowBulkAssign(true)} className="text-sm text-white bg-brand hover:bg-brand-dark px-4 py-2 rounded-lg font-bold">Assign Fleet Officer</button>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk assign modal */}
+      {showBulkAssign && (
+        <AssignOfficerModal
+          selected={selected}
+          fleetUsers={fleetUsers}
+          onClose={() => setShowBulkAssign(false)}
+          onDone={() => { setShowBulkAssign(false); setSelected(new Set()) }}
+        />
+      )}
+
+      {/* Single assign modal */}
+      {singleAssign && (
+        <AssignOfficerModal
+          selected={new Set([singleAssign.plateNo])}
+          fleetUsers={fleetUsers}
+          onClose={() => setSingleAssign(null)}
+          onDone={() => setSingleAssign(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function AssignOfficerModal({ selected, fleetUsers, onClose, onDone }) {
+  const [officerId, setOfficerId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const selectedUser = fleetUsers.find((u) => u.id === officerId)
+
+  const submit = async () => {
+    if (!officerId || !selectedUser) return
+    setSaving(true); setError(null)
+    try {
+      const assessSnap = await getDocs(query(collection(db, 'assessments')))
+      const updates = []
+      for (const d of assessSnap.docs) {
+        const plate = String(d.data()?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+        if (selected.has(plate)) {
+          updates.push(updateDoc(doc(db, 'assessments', d.id), {
+            'vehicleMeta.fleetOfficerId': selectedUser.id,
+            'vehicleMeta.fleetOfficerName': selectedUser.name,
+            'vehicleMeta.fleetOfficerEmail': selectedUser.email,
+            updatedAt: serverTimestamp(),
+          }))
+        }
+      }
+      await Promise.all(updates)
+      onDone()
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="bg-brand text-white px-5 py-4">
+          <div className="text-[10px] font-bold tracking-widest opacity-70">ASSIGN FLEET OFFICER</div>
+          <div className="font-black text-lg mt-0.5">{selected.size} vehicle{selected.size === 1 ? '' : 's'}</div>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Fleet Officer *</label>
+            <select value={officerId} onChange={(e) => setOfficerId(e.target.value)} className="input" required>
+              <option value="">— select fleet officer —</option>
+              {fleetUsers.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
+              ))}
+            </select>
+          </div>
+          {selectedUser && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-800">
+              <strong>{selectedUser.name}</strong> will be assigned as fleet officer.
+            </div>
+          )}
+        </div>
+        <div className="px-5 pb-5 flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl">Cancel</button>
+          <button type="button" onClick={submit} disabled={!officerId || saving} className="flex-1 text-sm font-bold text-white bg-brand hover:bg-brand-dark disabled:opacity-40 px-4 py-3 rounded-xl shadow">
+            {saving ? 'Assigning…' : 'Assign'}
+          </button>
         </div>
       </div>
     </div>
@@ -154,7 +300,7 @@ function PmTile({ label, value, tone }) {
   )
 }
 
-function MobileList({ vehicles, loading }) {
+function MobileList({ vehicles, loading, isManager, onAssign }) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('ALL')
 
@@ -235,6 +381,7 @@ function VehicleCard({ vehicle }) {
           <span className="flex items-center gap-1 min-w-0">
             <Icon name="user" className="w-3 h-3 text-gray-400 shrink-0" />
             <span className="uppercase truncate">{vehicle.assignedTo || 'Unassigned'}</span>
+            {vehicle.fleetOfficerName && <span className="text-gray-400">· {vehicle.fleetOfficerName}</span>}
           </span>
           <span className="flex items-center gap-1 shrink-0">
             <Icon name="calendar" className="w-3 h-3 text-gray-400" />
@@ -272,7 +419,7 @@ function VehicleCard({ vehicle }) {
   )
 }
 
-function FleetTable({ vehicles, loading }) {
+function FleetTable({ vehicles, loading, isManager, selected, onToggle, onSelectAll, onAssign }) {
   const [search, setSearch] = useState('')
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
@@ -327,10 +474,16 @@ function FleetTable({ vehicles, loading }) {
         <table className="min-w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b">
             <tr>
+              {isManager && (
+                <th className="px-2 py-3 text-center w-8">
+                  <input type="checkbox" checked={selected?.size === vehicles.length && vehicles.length > 0} onChange={onSelectAll} />
+                </th>
+              )}
               <Th label="Plate No"        field="plateNo"        sort={sort} setSort={setSort} />
               <Th label="Brand/Model"     field="brandModel"     sort={sort} setSort={setSort} />
               <Th label="Year Model"      field="yearModel"      sort={sort} setSort={setSort} />
               <Th label="Assigned To"     field="assignedTo"     sort={sort} setSort={setSort} />
+              <Th label="Fleet Officer"   field="fleetOfficerName" sort={sort} setSort={setSort} />
               <Th label="Latest Odo"      field="latestOdo"      sort={sort} setSort={setSort} />
               <Th label="Recent Service"  field="recentService"  sort={sort} setSort={setSort} />
               <Th label="Next PMS"        field="nextPms"        sort={sort} setSort={setSort} />
@@ -339,20 +492,37 @@ function FleetTable({ vehicles, loading }) {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {loading && (<tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">Loading…</td></tr>)}
+            {loading && (<tr><td colSpan={isManager ? 11 : 10} className="px-4 py-8 text-center text-gray-400">Loading…</td></tr>)}
             {!loading && pageRows.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+              <tr><td colSpan={isManager ? 11 : 10} className="px-4 py-8 text-center text-gray-400">
                 {vehicles.length === 0 ? 'No vehicles for your company yet.' : 'No matches for the current filter/search.'}
               </td></tr>
             )}
             {pageRows.map((v, i) => (
-              <tr key={v.plateNo + i} className={i % 2 ? 'bg-white' : 'bg-gray-50/40'}>
+              <tr key={v.plateNo + i} className={`${i % 2 ? 'bg-white' : 'bg-gray-50/40'} ${selected?.has(v.plateNo) ? '!bg-brand/5' : ''}`}>
+                {isManager && (
+                  <td className="px-2 py-2 text-center">
+                    <input type="checkbox" checked={selected?.has(v.plateNo)} onChange={() => onToggle(v.plateNo)} />
+                  </td>
+                )}
                 <td className="px-4 py-2 whitespace-nowrap">
                   <Link to={`/vehicles/${v.plateNo}`} className="text-brand hover:underline font-semibold">{v.plateNo}</Link>
                 </td>
                 <td className="px-4 py-2 whitespace-nowrap">{v.brandModel}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{v.yearModel}</td>
                 <td className="px-4 py-2 whitespace-nowrap uppercase">{v.assignedTo || '—'}</td>
+                <td className="px-4 py-2 whitespace-nowrap">
+                  {v.fleetOfficerName ? (
+                    <div className="flex items-center gap-1.5">
+                      <span>{v.fleetOfficerName}</span>
+                      {isManager && <button onClick={() => onAssign(v)} className="text-[9px] text-gray-400 hover:text-brand">change</button>}
+                    </div>
+                  ) : isManager ? (
+                    <button onClick={() => onAssign(v)} className="text-[10px] font-bold text-brand hover:underline">Assign</button>
+                  ) : (
+                    <span className="text-gray-400 italic text-xs">—</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 whitespace-nowrap">{v.latestOdo ? v.latestOdo.toLocaleString() : '-'}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{formatDate(v.recentService)}</td>
                 <td className="px-4 py-2 whitespace-nowrap">{formatDate(v.nextPms)}</td>

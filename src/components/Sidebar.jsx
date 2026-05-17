@@ -208,7 +208,6 @@ export default function Sidebar() {
         {canReports(role) && <Item to="/reports" label="Reports" />}
       </Section>
       <Section title="Data Management">
-        {canCustomers(role) && <Item to="/customers" label="Customers" />}
         {canFleet(role) && <Item to="/vehicles" label="Fleet" />}
         {canMechanics(role) && <Item to="/mechanics" label="Mechanics" />}
         {canMechanics(role) && <Item to="/services" label="Services Offered" />}

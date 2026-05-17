@@ -20,7 +20,8 @@ import {
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 import { isCustomer } from '../lib/roles'
-import { profileCompany } from '../lib/vehicles'
+import { profileCompany, isOfficerScoped } from '../lib/vehicles'
+import { watchVehicles } from '../lib/vehicles'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
 
 // Customer-visible statuses. Anything earlier than FOR_CLIENT_REVIEW is
@@ -68,6 +69,19 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
   const customerView = customerViewProp ?? isCustomer(profile?.role)
   const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
   const companyFilter = customerView ? (profileCompany(profile) || '').toString() : null
+  const officerScoped = isOfficerScoped(profile)
+  const uid = profile?.id || null
+
+  // Load assigned plates for officer-scoped users
+  const [officerPlates, setOfficerPlates] = useState(null)
+  useEffect(() => {
+    if (!officerScoped || !uid || !companyFilter) { setOfficerPlates(null); return }
+    const unsub = watchVehicles({ company: companyFilter }, ({ vehicles }) => {
+      const plates = new Set(vehicles.filter((v) => v.fleetOfficerId === uid).map((v) => v.plateNo))
+      setOfficerPlates(plates)
+    })
+    return unsub
+  }, [officerScoped, uid, companyFilter])
 
   const [rows, setRows] = useState([])
   const [source, setSource] = useState('loading')
@@ -92,16 +106,17 @@ export default function Quotations({ unbilledOnly = false, customerView: custome
   const visible = useMemo(() => {
     if (isFleetMgr) return rows.filter((r) => effectiveQuotationStatus(r) !== QUOT_STATUS.DRAFT)
     if (!customerView) return rows
-    // Customer view: filter by status + match company flexibly
     const cf = companyFilter ? companyFilter.toLowerCase().trim() : null
     return rows.filter((r) => {
       if (!CUSTOMER_STATUSES.has(effectiveQuotationStatus(r))) return false
       if (!cf) return true
       const rc = (r.company || '').toLowerCase().trim()
-      // Match by exact, contains, or partial
-      return rc === cf || rc.includes(cf) || cf.includes(rc)
+      if (!(rc === cf || rc.includes(cf) || cf.includes(rc))) return false
+      // Officer-scoped: only show quotations for assigned vehicles
+      if (officerPlates && !officerPlates.has((r.plateNo || '').toUpperCase())) return false
+      return true
     })
-  }, [rows, customerView, companyFilter])
+  }, [rows, customerView, companyFilter, officerPlates])
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()

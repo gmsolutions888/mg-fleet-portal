@@ -18,7 +18,7 @@ import {
   effectiveStatus,
   watchClientInvoices,
 } from '../lib/clientInvoices'
-import { profileCompany } from '../lib/vehicles'
+import { profileCompany, isOfficerScoped, watchVehicles } from '../lib/vehicles'
 import StatusPill from '../components/ui/StatusPill'
 import Icon from '../components/ui/Icon'
 import PageHero, { HeroStat } from '../components/ui/PageHero'
@@ -42,6 +42,18 @@ const BUCKET_LABELS = {
 export default function ClientInvoices({ customerView = false }) {
   const { profile } = useAuth()
   const company = customerView ? (profileCompany(profile) || '').toString() : ''
+  const officerScoped = customerView && isOfficerScoped(profile)
+  const uid = profile?.id || null
+  const [officerPlates, setOfficerPlates] = useState(null)
+
+  useEffect(() => {
+    if (!officerScoped || !uid || !company) { setOfficerPlates(null); return }
+    const unsub = watchVehicles({ company }, ({ vehicles }) => {
+      setOfficerPlates(new Set(vehicles.filter((v) => v.fleetOfficerId === uid).map((v) => v.plateNo)))
+    })
+    return unsub
+  }, [officerScoped, uid, company])
+
   const [rows, setRows] = useState([])
   const [source, setSource] = useState('loading')
   const [search, setSearch] = useState('')
@@ -78,7 +90,13 @@ export default function ClientInvoices({ customerView = false }) {
     )
   }
 
-  const decorated = useMemo(() => rows.map((r) => ({
+  // Officer-scoped: filter invoices to assigned vehicles only
+  const scopedRows = useMemo(() => {
+    if (!officerPlates) return rows
+    return rows.filter((r) => officerPlates.has((r.plateNo || '').toUpperCase()))
+  }, [rows, officerPlates])
+
+  const decorated = useMemo(() => scopedRows.map((r) => ({
     ...r,
     _eff: effectiveStatus(r, now),
     _aging: agingFor(r, now),

@@ -62,9 +62,29 @@ export function watchNotifications(profile, cb) {
   const isWarrior = WARRIOR_ROLES.has(role)
 
   // Fleet client — fetch all, filter client-side by company (flexible match)
+  // Officer-scoped fleet_client users also filter by assigned plates.
   if (q._customerFilter) {
     const companyId = (profile?.company_id || profile?.company || '').toLowerCase().trim()
-    return onSnapshot(
+    const isFleetClientOnly = role === 'fleet_client'
+    const profileId = profile?.id || null
+
+    // If officer-scoped, also listen to assessments to build plate set
+    let officerPlates = null
+    let unsubAssess = null
+    if (isFleetClientOnly && profileId) {
+      unsubAssess = onSnapshot(collection(db, 'assessments'), (snap) => {
+        const plates = new Set()
+        for (const d of snap.docs) {
+          if (d.data()?.vehicleMeta?.fleetOfficerId === profileId) {
+            const plate = String(d.data()?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+            if (plate) plates.add(plate)
+          }
+        }
+        officerPlates = plates.size > 0 ? plates : null
+      })
+    }
+
+    const unsubNotif = onSnapshot(
       query(q.base),
       (snap) => {
         const uid = auth?.currentUser?.uid
@@ -77,7 +97,12 @@ export function watchNotifications(profile, cb) {
           .filter((n) => {
             if (!n.company) return false
             const nc = n.company.toLowerCase().trim()
-            return nc === companyId || nc.includes(companyId) || companyId.includes(nc)
+            if (!(nc === companyId || nc.includes(companyId) || companyId.includes(nc))) return false
+            // Officer-scoped: only notifications for assigned plates
+            if (officerPlates && n.plateNo) {
+              return officerPlates.has(n.plateNo.toUpperCase().replace(/\s+/g, ''))
+            }
+            return true
           })
         rows.sort((a, b) => {
           const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0
@@ -91,6 +116,7 @@ export function watchNotifications(profile, cb) {
         cb({ rows: [], loading: false, error: err, source: 'error' })
       },
     )
+    return () => { unsubNotif(); unsubAssess?.() }
   }
 
   // Warriors need to cross-reference with their assigned appointments

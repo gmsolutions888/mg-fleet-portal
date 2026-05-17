@@ -38,6 +38,12 @@ function pick(obj, keys) {
 // Return the canonical "company" label from a user profile. Checks several
 // field shapes so both enrollment-created users (company_id) and legacy mg-fms
 // users (no company) can be handled.
+// True when the user is a fleet_client (not manager) — they only see
+// vehicles assigned to them via fleetOfficerId.
+export function isOfficerScoped(profile) {
+  return String(profile?.role || '').toLowerCase() === 'fleet_client'
+}
+
 export function profileCompany(profile) {
   return pick(profile, [
     'company_id', 'companyId', 'company', 'companyName', 'company_name',
@@ -192,6 +198,9 @@ function toVehicle(assessment, pmsRecord) {
     classification: cls,
     supervisorCleared: Boolean(assessment?.supervisorCleared),
     mobileNo: assessment?.vehicleMeta?.mobileNo || null,
+    fleetOfficerId: assessment?.vehicleMeta?.fleetOfficerId || null,
+    fleetOfficerName: assessment?.vehicleMeta?.fleetOfficerName || null,
+    fleetOfficerEmail: assessment?.vehicleMeta?.fleetOfficerEmail || null,
     color: assessment?.vehicleMeta?.color || h.color || null,
     transmission: assessment?.vehicleMeta?.transmission || h.transmission || null,
     engineNo: assessment?.vehicleMeta?.engineNo || h.engineNo || null,
@@ -245,6 +254,11 @@ export function watchVehicles(options, cb) {
         if (!v.color && meta.color) v.color = meta.color
         if (!v.transmission && meta.transmission) v.transmission = meta.transmission
         if (!v.engineNo && meta.engineNo) v.engineNo = meta.engineNo
+        if (!v.fleetOfficerId && meta.fleetOfficerId) {
+          v.fleetOfficerId = meta.fleetOfficerId
+          v.fleetOfficerName = meta.fleetOfficerName || null
+          v.fleetOfficerEmail = meta.fleetOfficerEmail || null
+        }
       }
       rows.push(v)
     }
@@ -333,6 +347,11 @@ export async function loadVehicleWithHistory(plateRaw, options = {}) {
       if (!vehicle.color && meta.color) vehicle.color = meta.color
       if (!vehicle.transmission && meta.transmission) vehicle.transmission = meta.transmission
       if (!vehicle.engineNo && meta.engineNo) vehicle.engineNo = meta.engineNo
+      if (!vehicle.fleetOfficerId && meta.fleetOfficerId) {
+        vehicle.fleetOfficerId = meta.fleetOfficerId
+        vehicle.fleetOfficerName = meta.fleetOfficerName || null
+        vehicle.fleetOfficerEmail = meta.fleetOfficerEmail || null
+      }
     }
     const history = buildHistoryFromAssessments(matching, pmsRecord)
     return { vehicle, history, source: 'firestore' }

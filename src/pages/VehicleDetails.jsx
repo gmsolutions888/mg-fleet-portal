@@ -231,7 +231,24 @@ function ServiceLogs({ plateNo, profile }) {
   const isFleetMgr = String(profile?.role || '').toLowerCase() === 'general_manager'
   const [logs, setLogs] = useState([])
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), type: 'Preventive Maintenance', notes: '', replacedParts: '', photos: [] })
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [deleting, setDeleting] = useState(null)
+  const [viewLog, setViewLog] = useState(null)
+
+  const handleDelete = async (logId) => {
+    setDeleting(logId)
+    try {
+      const { deleteDoc, doc: docRef } = await import('firebase/firestore')
+      await deleteDoc(docRef(db, 'serviceLogs', logId))
+    } catch (err) {
+      console.error('[serviceLogs] delete failed:', err)
+    } finally {
+      setDeleting(null)
+      setConfirmDelete(null)
+    }
+  }
+  const emptyItem = () => ({ type: 'Parts/Materials', qty: 1, description: '', unitCost: 0 })
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), notes: '', photos: [], items: [{ type: 'Labor', qty: 1, description: '', unitCost: 0 }, emptyItem()] })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [lightbox, setLightbox] = useState(null)
@@ -275,18 +292,26 @@ function ServiceLogs({ plateNo, profile }) {
     if (saving) return
     setSaving(true); setError(null)
     try {
+      const items = form.items.filter((i) => i.description.trim()).map((i) => ({
+        type: i.type,
+        qty: Number(i.qty) || 1,
+        description: i.description.trim(),
+        unitCost: Number(i.unitCost) || 0,
+        subTotal: (Number(i.qty) || 1) * (Number(i.unitCost) || 0),
+      }))
+      const total = items.reduce((s, i) => s + i.subTotal, 0)
       await addDoc(collection(db, 'serviceLogs'), {
         plateNo: plateNo.toUpperCase().replace(/\s+/g, ''),
         date: form.date,
-        type: form.type,
-        replacedParts: form.type === 'Parts Replacement' ? form.replacedParts.trim() : null,
+        items,
+        total,
         notes: form.notes.trim(),
         photos: form.photos,
         createdAt: serverTimestamp(),
         createdBy: auth?.currentUser?.uid || null,
         createdByName: profile?.name || profile?.email || null,
       })
-      setForm({ date: new Date().toISOString().slice(0, 10), type: 'Preventive Maintenance', notes: '', replacedParts: '', photos: [] })
+      setForm({ date: new Date().toISOString().slice(0, 10), notes: '', photos: [], items: [{ type: 'Labor', qty: 1, description: '', unitCost: 0 }, emptyItem()] })
       setShowForm(false)
     } catch (err) {
       setError(err.message || String(err))
@@ -312,41 +337,77 @@ function ServiceLogs({ plateNo, profile }) {
           <div className="text-xs font-bold uppercase tracking-wider text-gray-500">New Service Log</div>
           {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Date of Service *</label>
-              <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required className="input" />
-            </div>
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Type *</label>
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="input">
-                <option>Preventive Maintenance</option>
-                <option>Parts Replacement</option>
-              </select>
-            </div>
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Date of Service *</label>
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required className="input max-w-xs" />
           </div>
 
-          {form.type === 'Parts Replacement' && (
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Replaced Parts *</label>
-              <input
-                value={form.replacedParts}
-                onChange={(e) => setForm({ ...form, replacedParts: e.target.value })}
-                className="input w-full"
-                placeholder="e.g. Brake pads, Oil filter, Spark plugs"
-                required
-              />
+          {/* Line items */}
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Line Items</label>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs border rounded-lg overflow-hidden">
+                <thead className="bg-gray-100 text-[10px] uppercase tracking-wider text-gray-500">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left w-28">Type</th>
+                    <th className="px-2 py-1.5 text-center w-14">Qty</th>
+                    <th className="px-2 py-1.5 text-left">Description</th>
+                    <th className="px-2 py-1.5 text-right w-24">Unit Cost</th>
+                    <th className="px-2 py-1.5 text-right w-24">Subtotal</th>
+                    <th className="px-2 py-1.5 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y">
+                  {form.items.map((item, idx) => {
+                    const sub = (Number(item.qty) || 0) * (Number(item.unitCost) || 0)
+                    return (
+                      <tr key={idx}>
+                        <td className="px-2 py-1">
+                          <select value={item.type} onChange={(e) => { const items = [...form.items]; items[idx] = { ...items[idx], type: e.target.value }; setForm({ ...form, items }) }} className="input text-xs py-1 px-1">
+                            <option>Labor</option>
+                            <option>Parts/Materials</option>
+                          </select>
+                        </td>
+                        <td className="px-2 py-1">
+                          <input type="number" min="1" value={item.qty} onChange={(e) => { const items = [...form.items]; items[idx] = { ...items[idx], qty: e.target.value }; setForm({ ...form, items }) }} className="input text-xs py-1 px-1 w-14 text-center" />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input value={item.description} onChange={(e) => { const items = [...form.items]; items[idx] = { ...items[idx], description: e.target.value }; setForm({ ...form, items }) }} className="input text-xs py-1 px-1 w-full" placeholder="e.g. Engine Oil Change" />
+                        </td>
+                        <td className="px-2 py-1">
+                          <input type="number" min="0" value={item.unitCost} onChange={(e) => { const items = [...form.items]; items[idx] = { ...items[idx], unitCost: e.target.value }; setForm({ ...form, items }) }} className="input text-xs py-1 px-1 w-24 text-right" />
+                        </td>
+                        <td className="px-2 py-1 text-right font-semibold">{sub.toLocaleString('en', { minimumFractionDigits: 2 })}</td>
+                        <td className="px-2 py-1 text-center">
+                          {form.items.length > 1 && (
+                            <button type="button" onClick={() => { const items = form.items.filter((_, i) => i !== idx); setForm({ ...form, items }) }} className="text-red-400 hover:text-red-600 text-sm font-bold">✕</button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot className="bg-gray-50">
+                  <tr>
+                    <td colSpan={4} className="px-2 py-2 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500">Total</td>
+                    <td className="px-2 py-2 text-right font-black text-sm">{form.items.reduce((s, i) => s + (Number(i.qty) || 0) * (Number(i.unitCost) || 0), 0).toLocaleString('en', { minimumFractionDigits: 2 })}</td>
+                    <td className="px-2 py-2 text-center">
+                      <button type="button" onClick={() => setForm({ ...form, items: [...form.items, emptyItem()] })} className="w-5 h-5 rounded-full bg-brand hover:bg-brand-dark text-white text-xs font-bold flex items-center justify-center shadow">+</button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
-          )}
+          </div>
 
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Service Notes</label>
             <textarea
               value={form.notes}
               onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              rows={3}
+              rows={2}
               className="input w-full"
-              placeholder="Describe the service performed..."
+              placeholder="Additional notes..."
             />
           </div>
 
@@ -381,27 +442,40 @@ function ServiceLogs({ plateNo, profile }) {
 
       {logs.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm whitespace-nowrap">
+          <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase tracking-wider text-gray-600">
               <tr>
                 <th className="px-3 py-2 text-left font-medium">Date</th>
-                <th className="px-3 py-2 text-left font-medium">Type</th>
-                <th className="px-3 py-2 text-left font-medium">Replaced Parts</th>
+                <th className="px-3 py-2 text-left font-medium">Items</th>
+                <th className="px-3 py-2 text-right font-medium">Total</th>
                 <th className="px-3 py-2 text-left font-medium">Notes</th>
                 <th className="px-3 py-2 text-left font-medium">Photos</th>
                 <th className="px-3 py-2 text-left font-medium">Added By</th>
+                {isFleetMgr && <th className="px-3 py-2 w-8"></th>}
               </tr>
             </thead>
             <tbody className="divide-y">
               {logs.map((log) => (
-                <tr key={log.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 text-xs">{log.date || '—'}</td>
-                  <td className="px-3 py-2">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${log.type === 'Parts Replacement' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
-                      {log.type}
-                    </span>
+                <tr key={log.id} className="hover:bg-gray-50 align-top">
+                  <td className="px-3 py-2 text-xs whitespace-nowrap">
+                    <button onClick={() => setViewLog(log)} className="text-brand hover:underline font-semibold">{log.date || '—'}</button>
                   </td>
-                  <td className="px-3 py-2 text-xs text-blue-700 font-semibold">{log.replacedParts || '—'}</td>
+                  <td className="px-3 py-2">
+                    {log.items?.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {log.items.map((item, i) => (
+                          <div key={i} className="text-xs flex items-baseline gap-1.5">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${item.type === 'Labor' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{item.type === 'Labor' ? 'L' : 'P'}</span>
+                            <span className="text-gray-700">{item.qty > 1 ? `${item.qty}× ` : ''}{item.description}</span>
+                            <span className="text-gray-400 ml-auto whitespace-nowrap">{(item.subTotal || 0).toLocaleString('en', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : log.type ? (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${log.type === 'Parts Replacement' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>{log.type}</span>
+                    ) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-right font-semibold whitespace-nowrap">{log.total != null ? log.total.toLocaleString('en', { minimumFractionDigits: 2 }) : '—'}</td>
                   <td className="px-3 py-2 text-xs text-gray-700 max-w-[200px] whitespace-normal">{log.notes || '—'}</td>
                   <td className="px-3 py-2">
                     {log.photos?.length > 0 ? (
@@ -412,11 +486,124 @@ function ServiceLogs({ plateNo, profile }) {
                       </div>
                     ) : <span className="text-xs text-gray-400">—</span>}
                   </td>
-                  <td className="px-3 py-2 text-[10px] text-gray-400">{log.createdByName || '—'}</td>
+                  <td className="px-3 py-2 text-[10px] text-gray-400 whitespace-nowrap">{log.createdByName || '—'}</td>
+                  {isFleetMgr && (
+                    <td className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => setConfirmDelete(log)}
+                        disabled={deleting === log.id}
+                        className="text-red-400 hover:text-red-600 text-[10px] font-bold disabled:opacity-40"
+                      >
+                        {deleting === log.id ? '...' : '✕'}
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* View service log detail modal */}
+      {viewLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={() => setViewLog(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-brand text-white px-5 py-4 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] font-bold tracking-widest opacity-70">SERVICE LOG</div>
+                <div className="font-black text-lg mt-0.5">{viewLog.date || '—'}</div>
+              </div>
+              <button onClick={() => setViewLog(null)} className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center text-lg font-bold">✕</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Line items */}
+              {viewLog.items?.length > 0 ? (
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">Items</div>
+                  <table className="min-w-full text-xs border rounded-lg overflow-hidden">
+                    <thead className="bg-gray-50 text-[10px] uppercase tracking-wider text-gray-500">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left">Type</th>
+                        <th className="px-2 py-1.5 text-center">Qty</th>
+                        <th className="px-2 py-1.5 text-left">Description</th>
+                        <th className="px-2 py-1.5 text-right">Unit Cost</th>
+                        <th className="px-2 py-1.5 text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {viewLog.items.map((item, i) => (
+                        <tr key={i}>
+                          <td className="px-2 py-1.5">
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${item.type === 'Labor' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{item.type}</span>
+                          </td>
+                          <td className="px-2 py-1.5 text-center">{item.qty}</td>
+                          <td className="px-2 py-1.5">{item.description}</td>
+                          <td className="px-2 py-1.5 text-right">{(Number(item.unitCost) || 0).toLocaleString('en', { minimumFractionDigits: 2 })}</td>
+                          <td className="px-2 py-1.5 text-right font-semibold">{(Number(item.subTotal) || 0).toLocaleString('en', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50">
+                      <tr>
+                        <td colSpan={4} className="px-2 py-2 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500">Total</td>
+                        <td className="px-2 py-2 text-right font-black">{(Number(viewLog.total) || 0).toLocaleString('en', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : viewLog.type && (
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Type</div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${viewLog.type === 'Parts Replacement' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>{viewLog.type}</span>
+                  {viewLog.replacedParts && <div className="text-xs text-blue-700 font-semibold mt-1">🔩 {viewLog.replacedParts}</div>}
+                </div>
+              )}
+
+              {/* Notes */}
+              {viewLog.notes && (
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">Notes</div>
+                  <div className="text-sm text-gray-700 whitespace-pre-wrap">{viewLog.notes}</div>
+                </div>
+              )}
+
+              {/* Photos */}
+              {viewLog.photos?.length > 0 && (
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">Photos ({viewLog.photos.length})</div>
+                  <div className="flex gap-2 flex-wrap">
+                    {viewLog.photos.map((src, i) => (
+                      <img key={i} src={src} className="w-24 h-24 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md" alt="" onClick={() => { setViewLog(null); setTimeout(() => setLightbox(src), 100) }} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Meta */}
+              <div className="text-[10px] text-gray-400 pt-2 border-t">
+                Added by {viewLog.createdByName || '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-5 py-4">
+              <div className="text-sm font-bold text-red-700 mb-2">Delete Service Log</div>
+              <div className="text-sm text-gray-600">Delete this service log from {confirmDelete.date || '—'}?</div>
+            </div>
+            <div className="px-5 pb-5 flex gap-3">
+              <button type="button" onClick={() => setConfirmDelete(null)} className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl">Cancel</button>
+              <button type="button" onClick={() => handleDelete(confirmDelete.id)} disabled={deleting === confirmDelete.id} className="flex-1 text-sm font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-40 px-4 py-3 rounded-xl shadow">
+                {deleting === confirmDelete.id ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -202,7 +202,6 @@ function StaffMenu({ profile }) {
 
       <SectionHeader>Data Management</SectionHeader>
       <div className="bg-white divide-y">
-        {canCustomers(role) && <Row to="/customers" icon="user" label="Customers" />}
         {canFleet(role) && <Row to="/vehicles" icon="car" label="Fleet" />}
         {canMechanics(role) && <Row to="/mechanics" icon="tool" label="Mechanics" />}
         {canMechanics(role) && <Row to="/services" icon="tool" label="Services Offered" />}

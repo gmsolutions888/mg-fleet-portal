@@ -11,7 +11,7 @@ import { formatMoney, formatDate } from '../lib/dummyData'
 import {
   CLIENT_INVOICE_STATUS, agingFor, watchClientInvoices,
 } from '../lib/clientInvoices'
-import { profileCompany } from '../lib/vehicles'
+import { profileCompany, isOfficerScoped, watchVehicles } from '../lib/vehicles'
 import Icon from '../components/ui/Icon'
 import PageHero from '../components/ui/PageHero'
 
@@ -26,6 +26,18 @@ export default function StatementOfAccount({ customerView = false }) {
   const [source, setSource] = useState('loading')
   const [now] = useState(new Date())
 
+  const officerScoped = customerView && isOfficerScoped(profile)
+  const uid = profile?.id || null
+  const [officerPlates, setOfficerPlates] = useState(null)
+
+  useEffect(() => {
+    if (!officerScoped || !uid || !company) { setOfficerPlates(null); return }
+    const unsub = watchVehicles({ company }, ({ vehicles }) => {
+      setOfficerPlates(new Set(vehicles.filter((v) => v.fleetOfficerId === uid).map((v) => v.plateNo)))
+    })
+    return unsub
+  }, [officerScoped, uid, company])
+
   useEffect(() => {
     if (!company) { setRows([]); setSource('no-company'); return () => {} }
     const unsub = watchClientInvoices({ company }, ({ rows, source }) => {
@@ -34,8 +46,13 @@ export default function StatementOfAccount({ customerView = false }) {
     return unsub
   }, [company])
 
+  const scopedRows = useMemo(() => {
+    if (!officerPlates) return rows
+    return rows.filter((r) => officerPlates.has((r.plateNo || '').toUpperCase()))
+  }, [rows, officerPlates])
+
   const open = useMemo(() => {
-    return rows
+    return scopedRows
       .filter((r) => r.status === CLIENT_INVOICE_STATUS.OPEN)
       .map((r) => ({ ...r, _aging: agingFor(r, now) }))
       .sort((a, b) => Date.parse(a.issuedAtIso || 0) - Date.parse(b.issuedAtIso || 0))

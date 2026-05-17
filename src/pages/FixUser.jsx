@@ -201,6 +201,170 @@ export default function FixUser() {
     }
   }
 
+  const RETAIN_PLATES = new Set([
+    'CCM9994', 'LAL2769', 'NIG3247', 'CCM1360', 'LCV2906', 'NCR6634',
+    'NFI2565', 'NEO1121', 'MBF9221', 'NHL3196', 'DAB5472', 'NBQ8573',
+    'NGF4649', 'NED6944',
+  ])
+  const normPlate = (p) => String(p || '').toUpperCase().replace(/\s+/g, '')
+
+  const cleanupCollection = async (colName, plateField) => {
+    const { getDocs, deleteDoc, collection: col, doc: docRef } = await import('firebase/firestore')
+    const snap = await getDocs(col(db, colName))
+    let deleted = 0, retained = 0, failed = 0
+    for (const d of snap.docs) {
+      const plate = normPlate(d.data()?.[plateField])
+      if (RETAIN_PLATES.has(plate)) { retained++; continue }
+      try { await deleteDoc(docRef(db, colName, d.id)); deleted++ }
+      catch { failed++ }
+    }
+    return { deleted, retained, failed }
+  }
+
+  const cleanupAll = async () => {
+    setStatus('Cleaning up all collections...')
+    try {
+      const results = []
+
+      // Assessments
+      setStatus('Cleaning assessments...')
+      const a = await cleanupCollection('assessments', 'header')
+      // assessments use header.plate, need custom
+      const { getDocs, deleteDoc, collection: col, doc: docRef } = await import('firebase/firestore')
+      const aSnap = await getDocs(col(db, 'assessments'))
+      let aDel = 0, aRet = 0, aFail = 0
+      for (const d of aSnap.docs) {
+        const plate = normPlate(d.data()?.header?.plate)
+        if (RETAIN_PLATES.has(plate)) { aRet++; continue }
+        try { await deleteDoc(docRef(db, 'assessments', d.id)); aDel++ }
+        catch { aFail++ }
+      }
+      results.push(`Assessments: ${aRet} kept, ${aDel} deleted, ${aFail} failed`)
+
+      // Appointments
+      setStatus('Cleaning appointments...')
+      const apSnap = await getDocs(col(db, 'appointments'))
+      let apDel = 0, apRet = 0, apFail = 0
+      for (const d of apSnap.docs) {
+        const plate = normPlate(d.data()?.plateNo)
+        if (RETAIN_PLATES.has(plate)) { apRet++; continue }
+        try { await deleteDoc(docRef(db, 'appointments', d.id)); apDel++ }
+        catch { apFail++ }
+      }
+      results.push(`Bookings: ${apRet} kept, ${apDel} deleted, ${apFail} failed`)
+
+      // Service Receipts / Quotations
+      setStatus('Cleaning quotations/receipts...')
+      const srSnap = await getDocs(col(db, 'serviceReceipts'))
+      let srDel = 0, srRet = 0, srFail = 0
+      for (const d of srSnap.docs) {
+        const plate = normPlate(d.data()?.plateNo)
+        if (RETAIN_PLATES.has(plate)) { srRet++; continue }
+        try { await deleteDoc(docRef(db, 'serviceReceipts', d.id)); srDel++ }
+        catch { srFail++ }
+      }
+      results.push(`Quotations/Receipts: ${srRet} kept, ${srDel} deleted, ${srFail} failed`)
+
+      // Branch Invoices
+      setStatus('Cleaning branch invoices...')
+      const biSnap = await getDocs(col(db, 'branchInvoices'))
+      let biDel = 0, biRet = 0, biFail = 0
+      for (const d of biSnap.docs) {
+        const plate = normPlate(d.data()?.plateNo)
+        if (RETAIN_PLATES.has(plate)) { biRet++; continue }
+        try { await deleteDoc(docRef(db, 'branchInvoices', d.id)); biDel++ }
+        catch { biFail++ }
+      }
+      results.push(`Branch Invoices: ${biRet} kept, ${biDel} deleted, ${biFail} failed`)
+
+      // Client Invoices
+      setStatus('Cleaning client invoices...')
+      const ciSnap = await getDocs(col(db, 'clientInvoices'))
+      let ciDel = 0, ciRet = 0, ciFail = 0
+      for (const d of ciSnap.docs) {
+        const plate = normPlate(d.data()?.plateNo)
+        if (RETAIN_PLATES.has(plate)) { ciRet++; continue }
+        try { await deleteDoc(docRef(db, 'clientInvoices', d.id)); ciDel++ }
+        catch { ciFail++ }
+      }
+      results.push(`Client Invoices: ${ciRet} kept, ${ciDel} deleted, ${ciFail} failed`)
+
+      // Notifications
+      setStatus('Cleaning notifications...')
+      const nSnap = await getDocs(col(db, 'notifications'))
+      let nDel = 0, nRet = 0, nFail = 0
+      for (const d of nSnap.docs) {
+        const plate = normPlate(d.data()?.plateNo)
+        if (!plate || RETAIN_PLATES.has(plate)) { nRet++; continue }
+        try { await deleteDoc(docRef(db, 'notifications', d.id)); nDel++ }
+        catch { nFail++ }
+      }
+      results.push(`Notifications: ${nRet} kept, ${nDel} deleted, ${nFail} failed`)
+
+      setStatus(results.join('\n'))
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
+  const cleanupUsers = async () => {
+    const RETAIN_EMAILS = new Set(['edejercito@gmail.com', 'fleet.mgr@test.com'])
+    setStatus('Cleaning up users...')
+    try {
+      const { getDocs, deleteDoc, collection: col, doc: docRef } = await import('firebase/firestore')
+      const snap = await getDocs(col(db, 'users'))
+      let deleted = 0, retained = 0, failed = 0
+      for (const d of snap.docs) {
+        const email = (d.data()?.email || '').toLowerCase().trim()
+        if (RETAIN_EMAILS.has(email)) { retained++; continue }
+        try { await deleteDoc(docRef(db, 'users', d.id)); deleted++ }
+        catch { failed++ }
+      }
+      // Also clean pendingInvites
+      const piSnap = await getDocs(col(db, 'pendingInvites'))
+      let piDel = 0
+      for (const d of piSnap.docs) {
+        try { await deleteDoc(docRef(db, 'pendingInvites', d.id)); piDel++ }
+        catch {}
+      }
+      setStatus(`Users: ${retained} kept, ${deleted} deleted, ${failed} failed | Pending invites: ${piDel} deleted`)
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
+  const cleanupVehicles = async () => {
+    const RETAIN = new Set([
+      'CCM9994', 'LAL2769', 'NIG3247', 'CCM1360', 'LCV2906', 'NCR6634',
+      'NFI2565', 'NEO1121', 'MBF9221', 'NHL3196', 'DAB5472', 'NBQ8573',
+      'NGF4649', 'NED6944',
+    ])
+    setStatus('Scanning assessments...')
+    try {
+      const { getDocs, deleteDoc, collection: col, doc: docRef } = await import('firebase/firestore')
+      const snap = await getDocs(col(db, 'assessments'))
+      let deleted = 0
+      let retained = 0
+      let failed = 0
+      for (const d of snap.docs) {
+        const plate = String(d.data()?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
+        if (RETAIN.has(plate)) {
+          retained++
+          continue
+        }
+        try {
+          await deleteDoc(docRef(db, 'assessments', d.id))
+          deleted++
+        } catch {
+          failed++
+        }
+      }
+      setStatus(`Done! Retained: ${retained} | Deleted: ${deleted} | Failed: ${failed}`)
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>Fix User</h1>
@@ -244,6 +408,24 @@ export default function FixUser() {
           style={{ background: '#dc2626', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
         >
           Revert Invoice (III0495)
+        </button>
+        <button
+          onClick={cleanupVehicles}
+          style={{ background: '#991b1b', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Cleanup Vehicles (retain 14)
+        </button>
+        <button
+          onClick={cleanupAll}
+          style={{ background: '#450a0a', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Cleanup ALL (bookings, quotes, invoices, notifications)
+        </button>
+        <button
+          onClick={cleanupUsers}
+          style={{ background: '#3b0764', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Cleanup Users (retain 2)
         </button>
       </div>
     </div>

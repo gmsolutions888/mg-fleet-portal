@@ -331,8 +331,23 @@ function AppointmentCard({ appt }) {
         const { getDocs, query, where, collection } = await import('firebase/firestore')
         const { db } = await import('../lib/firebase')
         const invSnap = await getDocs(query(collection(db, 'branchInvoices'), where('plateNo', '==', appt.plateNo)))
-        const hasInvoice = invSnap.docs.some((d) => d.data().status !== 'VOID')
-        if (hasInvoice) { if (!cancelled) setFixStatus('invoiced'); return }
+        const activeInvoice = invSnap.docs.find((d) => d.data().status !== 'VOID')
+        if (activeInvoice) {
+          // Auto-complete appointment if still active
+          const activeStatuses = new Set(['ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
+          if (activeStatuses.has(appt.status) && appt.id) {
+            try {
+              const { doc: docRef, updateDoc: updDoc, serverTimestamp: srvTs } = await import('firebase/firestore')
+              await updDoc(docRef(db, 'appointments', appt.id), {
+                status: 'COMPLETED',
+                note: `Service completed — invoice ${activeInvoice.data().code || ''} issued`,
+                updatedAt: srvTs(),
+              })
+            } catch (e) { console.warn('[home] auto-complete failed:', e) }
+          }
+          if (!cancelled) setFixStatus('invoiced')
+          return
+        }
 
         // Check if re-assessment with fixes exists
         const assessSnap = await getDocs(query(collection(db, 'assessments')))

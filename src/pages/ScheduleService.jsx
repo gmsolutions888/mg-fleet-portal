@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { watchVehicles, profileCompany } from '../lib/vehicles'
+import { watchVehicles, profileCompany, isOfficerScoped } from '../lib/vehicles'
 import { watchAppointments, requestBooking, updateAppointmentStatus, APPT_STATUS } from '../lib/appointments'
 import { formatDate, formatDateTime } from '../lib/dummyData'
 import VehicleImage from '../components/ui/VehicleImage'
@@ -36,6 +36,8 @@ const REQUESTED_STATUSES = new Set([
 export default function ScheduleService() {
   const { profile } = useAuth()
   const company = (profileCompany(profile) || '').toString()
+  const officerScoped = isOfficerScoped(profile)
+  const uid = profile?.id || null
 
   const [vehicles, setVehicles] = useState([])
   const [appointments, setAppointments] = useState([])
@@ -53,10 +55,11 @@ export default function ScheduleService() {
     // Don't filter by clientVisibleOnly — fleet clients need to see all
     // their company's vehicles to request service bookings.
     const unsub = watchVehicles({ company }, ({ vehicles }) => {
-      setVehicles(vehicles)
+      const filtered = officerScoped && uid ? vehicles.filter((v) => v.fleetOfficerId === uid) : vehicles
+      setVehicles(filtered)
     })
     return unsub
-  }, [company])
+  }, [company, officerScoped, uid])
 
   useEffect(() => {
     const unsub = watchAppointments({ dummyFallback: false }, ({ rows }) => {

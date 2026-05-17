@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { isClientView } from '../lib/roles'
-import { watchVehicles, profileCompany } from '../lib/vehicles'
+import { watchVehicles, profileCompany, isOfficerScoped } from '../lib/vehicles'
 import VehicleImage from '../components/ui/VehicleImage'
 import OverdueChip from '../components/ui/OverdueChip'
 import Icon from '../components/ui/Icon'
@@ -25,13 +25,17 @@ export default function Portal() {
 
   const clientVisibleOnly = isClientView(profile)
 
+  const officerScoped = isOfficerScoped(profile)
+  const uid = profile?.id || null
+
   useEffect(() => {
     if (!company) { setVehicles([]); setSource('no-company'); return () => {} }
     const unsub = watchVehicles({ company, clientVisibleOnly }, ({ vehicles, source }) => {
-      setVehicles(vehicles); setSource(source)
+      const filtered = officerScoped && uid ? vehicles.filter((v) => v.fleetOfficerId === uid) : vehicles
+      setVehicles(filtered); setSource(source)
     })
     return unsub
-  }, [company, clientVisibleOnly])
+  }, [company, clientVisibleOnly, officerScoped, uid])
 
   const { upcoming, overdue } = useMemo(() => splitByPm(vehicles), [vehicles])
   const fleetStats = useMemo(() => computeStats(vehicles), [vehicles])
@@ -77,7 +81,7 @@ export default function Portal() {
       </div>
 
       <div className="px-3 sm:px-6 pt-5 space-y-5">
-        <ClientBillingSnapshot company={company} />
+        <ClientBillingSnapshot company={company} officerPlates={officerScoped && uid ? new Set(vehicles.map((v) => v.plateNo)) : null} />
 
         <Section
           title="Overdue Preventive Maintenance"
