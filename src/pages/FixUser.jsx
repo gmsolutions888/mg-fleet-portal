@@ -226,10 +226,8 @@ export default function FixUser() {
     try {
       const results = []
 
-      // Assessments
+      // Assessments (use header.plate, not a flat field)
       setStatus('Cleaning assessments...')
-      const a = await cleanupCollection('assessments', 'header')
-      // assessments use header.plate, need custom
       const { getDocs, deleteDoc, collection: col, doc: docRef } = await import('firebase/firestore')
       const aSnap = await getDocs(col(db, 'assessments'))
       let aDel = 0, aRet = 0, aFail = 0
@@ -365,6 +363,62 @@ export default function FixUser() {
     }
   }
 
+  const FLEET_VEHICLES = [
+    { plate: 'CCM9994', make: 'Mitsubishi', model: 'L300', year: '2020' },
+    { plate: 'LAL2769', make: 'Mitsubishi', model: 'Canter', year: '2019' },
+    { plate: 'NIG3247', make: 'Isuzu', model: 'NLR', year: '2022' },
+    { plate: 'CCM1360', make: 'Mitsubishi', model: 'L300', year: '2021' },
+    { plate: 'LCV2906', make: 'Isuzu', model: 'NLR', year: '2021' },
+    { plate: 'NCR6634', make: 'Mitsubishi', model: 'Canter', year: '2020' },
+    { plate: 'NFI2565', make: 'Isuzu', model: 'ELF', year: '2022' },
+    { plate: 'NEO1121', make: 'Mitsubishi', model: 'L300', year: '2023' },
+    { plate: 'MBF9221', make: 'Isuzu', model: 'NLR', year: '2020' },
+    { plate: 'NHL3196', make: 'Mitsubishi', model: 'Canter', year: '2021' },
+    { plate: 'DAB5472', make: 'Isuzu', model: 'ELF', year: '2019' },
+    { plate: 'NBQ8573', make: 'Mitsubishi', model: 'L300', year: '2022' },
+    { plate: 'NGF4649', make: 'Isuzu', model: 'NLR', year: '2023' },
+    { plate: 'NED6944', make: 'Mitsubishi', model: 'Canter', year: '2021' },
+  ]
+
+  const seedVehicles = async () => {
+    setStatus('Seeding 14 fleet vehicles...')
+    try {
+      let created = 0, failed = 0
+      for (const v of FLEET_VEHICLES) {
+        try {
+          await addDoc(collection(db, 'assessments'), {
+            id: Date.now() + created,
+            rwaNumber: `RWA-SEED-${v.plate}`,
+            type: '_vehicleRegistration',
+            header: {
+              plate: v.plate,
+              make: v.make,
+              model: v.model,
+              yearModel: v.year,
+              client: 'PUREFOODS',
+              branch: 'MGCAVITE',
+              technician: 'System',
+              odometer: 0,
+              type: 'Initial',
+              date: new Date().toISOString().slice(0, 10),
+            },
+            vehicleMeta: { assignedTo: '', mobileNo: '' },
+            itemResults: {},
+            classification: { overallStatus: 'active', dispatchAllowed: true, failCriticalCount: 0, monitorCount: 0, totalBlockerCount: 0 },
+            fmsStatus: 'synced',
+            submittedAt: new Date().toISOString(),
+            review_status: 'SENT_TO_CLIENT',
+            createdBy: user?.uid || null,
+          })
+          created++
+        } catch { failed++ }
+      }
+      setStatus(`Done! Created: ${created} | Failed: ${failed}. Refresh fleet pages to see vehicles.`)
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>Fix User</h1>
@@ -426,6 +480,12 @@ export default function FixUser() {
           style={{ background: '#3b0764', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
         >
           Cleanup Users (retain 2)
+        </button>
+        <button
+          onClick={seedVehicles}
+          style={{ background: '#047857', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Seed 14 Fleet Vehicles
         </button>
       </div>
     </div>
