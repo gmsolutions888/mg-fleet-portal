@@ -264,7 +264,7 @@ export function generateRwa(now = Date.now()) {
 //       type, date }
 //
 // returns { id, rwaNumber, classification }
-export async function createAssessment({ appointmentId, header, itemResults, pmsData, labors, otherLabor }) {
+export async function createAssessment({ appointmentId, header, itemResults, pmsData, labors, otherLabor, ecuScan }) {
   if (!db) throw new Error('Firestore not configured.')
 
   const now = Date.now()
@@ -285,6 +285,7 @@ export async function createAssessment({ appointmentId, header, itemResults, pms
     // this field still work; the prefill falls back to per-item labor.
     labors: Array.isArray(labors) ? labors : null,
     otherLabor: otherLabor || null,
+    ecuScan: ecuScan || null,
     fmsStatus: 'synced',
     submittedAt: new Date(now).toISOString(),
     appointmentId: appointmentId || null, // portal-only linkage

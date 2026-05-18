@@ -100,6 +100,7 @@ export default function AssessmentForm() {
   // `otherLabor` is a free-text rider bound to LBR_OTHER.
   const [labors, setLabors] = useState(() => initialDraft?.labors || {})
   const [otherLabor, setOtherLabor] = useState(() => initialDraft?.otherLabor || '')
+  const [ecuScan, setEcuScan] = useState(() => initialDraft?.ecuScan || { codes: [], photos: [], notes: '', noCodes: false })
   const [openCat, setOpenCat] = useState(CATEGORIES[0]?.code || null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -179,11 +180,11 @@ export default function AssessmentForm() {
     if (loading) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      saveDraft(appointmentId, { header, itemResults, prevAssessment, reassessMode, labors, otherLabor })
+      saveDraft(appointmentId, { header, itemResults, prevAssessment, reassessMode, labors, otherLabor, ecuScan })
       setDraftSavedAt(Date.now())
     }, 600)
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
-  }, [appointmentId, header, itemResults, prevAssessment, reassessMode, labors, otherLabor, loading])
+  }, [appointmentId, header, itemResults, prevAssessment, reassessMode, labors, otherLabor, ecuScan, loading])
 
   // When the type flips to Re-Assessment, fetch the latest unresolved
   // assessment for this plate. If there isn't one, we can't do a proper
@@ -306,7 +307,8 @@ export default function AssessmentForm() {
     }))
   }
 
-  const canSubmit = answered > 0 && header.plate && header.technician && !saving
+  const ecuValid = ecuScan.noCodes || ecuScan.codes.some((c) => c.code.trim())
+  const canSubmit = answered > 0 && header.plate && header.technician && ecuValid && !saving
 
   // Round 24 — when Submit is clicked but the form's incomplete, find
   // the first blocker, scroll to it, focus the offending input, and
@@ -324,6 +326,13 @@ export default function AssessmentForm() {
         anchorId: 'assess-categories',
         message: 'Rate at least one item below before submitting.',
         openCat: activeCategories[0]?.code || null,
+      }
+    }
+    if (!ecuValid) {
+      return {
+        fieldId: null,
+        anchorId: 'ecu-scanning-section',
+        message: 'ECU Scanning is required. Add at least one trouble code or mark "No Codes".',
       }
     }
     return null
@@ -364,6 +373,12 @@ export default function AssessmentForm() {
     setSaving(true); setError(null)
     try {
       const { labors: laborsPayload, otherLabor: otherLaborPayload } = buildLaborsPayload()
+      const ecuPayload = {
+        noCodes: ecuScan.noCodes,
+        codes: ecuScan.codes.filter((c) => c.code.trim()),
+        photos: ecuScan.photos || [],
+        notes: (ecuScan.notes || '').trim() || null,
+      }
       const { rwaNumber } = await createAssessment({
         appointmentId,
         header: {
@@ -373,6 +388,7 @@ export default function AssessmentForm() {
         itemResults,
         labors: laborsPayload,
         otherLabor: otherLaborPayload,
+        ecuScan: ecuPayload,
       })
       // Submit succeeded — draft is no longer needed.
       clearDraft(appointmentId)
@@ -395,6 +411,7 @@ export default function AssessmentForm() {
     setItemResults({})
     setPrevAssessment(null)
     setReassessMode(null)
+    setEcuScan({ codes: [], photos: [], notes: '', noCodes: false })
     setDraftSavedAt(null)
     prefilledKeyRef.current = ''
   }
@@ -617,6 +634,9 @@ export default function AssessmentForm() {
         otherLabor={otherLabor}
         setOtherLabor={setOtherLabor}
       />
+
+      {/* ── ECU Scanning (mandatory) ──────────────────────────── */}
+      <EcuScanSection ecuScan={ecuScan} setEcuScan={setEcuScan} />
 
       {/* ── Sticky submit bar ───────────────────────────────────── */}
       <div
@@ -1129,6 +1149,168 @@ function LaborPicker({ labors, setLabors, otherLabor, setOtherLabor }) {
             </div>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+// ECU Scanning — mandatory section. Assessor must either add DTC codes or
+// explicitly mark "No Codes" before submitting.
+function EcuScanSection({ ecuScan, setEcuScan }) {
+  const { codes, photos, notes, noCodes } = ecuScan
+
+  const addCode = () => {
+    setEcuScan((prev) => ({
+      ...prev,
+      noCodes: false,
+      codes: [...prev.codes, { code: '', description: '' }],
+    }))
+  }
+
+  const updateCode = (idx, field, value) => {
+    setEcuScan((prev) => {
+      const next = [...prev.codes]
+      next[idx] = { ...next[idx], [field]: value }
+      return { ...prev, codes: next }
+    })
+  }
+
+  const removeCode = (idx) => {
+    setEcuScan((prev) => ({
+      ...prev,
+      codes: prev.codes.filter((_, i) => i !== idx),
+    }))
+  }
+
+  const toggleNoCodes = () => {
+    setEcuScan((prev) => ({
+      ...prev,
+      noCodes: !prev.noCodes,
+      codes: !prev.noCodes ? [] : prev.codes,
+    }))
+  }
+
+  const setPhotos = (p) => setEcuScan((prev) => ({ ...prev, photos: p }))
+  const setNotes = (n) => setEcuScan((prev) => ({ ...prev, notes: n }))
+
+  const hasAnyCodes = codes.some((c) => c.code.trim())
+  const isComplete = noCodes || hasAnyCodes
+
+  return (
+    <div id="ecu-scanning-section" className="m-3 sm:m-4 scroll-mt-4">
+      <div className={`rounded-2xl border-2 overflow-hidden ${isComplete ? 'border-blue-300 bg-blue-50/20' : 'border-blue-400 bg-white'}`}>
+        {/* Header */}
+        <div className="px-4 py-3.5 flex items-center gap-3 bg-blue-600 text-white">
+          <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+              <path d="M9 3H4a1 1 0 00-1 1v5a1 1 0 001 1h1v4H4a1 1 0 00-1 1v5a1 1 0 001 1h5a1 1 0 001-1v-1h4v1a1 1 0 001 1h5a1 1 0 001-1v-5a1 1 0 00-1-1h-1v-4h1a1 1 0 001-1V4a1 1 0 00-1-1h-5a1 1 0 00-1 1v1h-4V4a1 1 0 00-1-1zm1 3V5h4v1a1 1 0 001 1h1v4h-1a1 1 0 00-1 1v1h-4v-1a1 1 0 00-1-1H8V7h1a1 1 0 001-1z"/>
+            </svg>
+          </div>
+          <div className="flex-1">
+            <div className="font-black text-sm">ECU Scanning</div>
+            <div className="text-[11px] text-white/80">Mandatory — performed on every visit</div>
+          </div>
+          <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${isComplete ? 'bg-white/20 text-white' : 'bg-white text-blue-700'}`}>
+            {isComplete ? 'Required \u2713' : 'Required'}
+          </span>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Trouble Codes (DTCs) */}
+          <div className="bg-blue-50/50 border border-blue-200 rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-black text-gray-700 uppercase tracking-wide">Trouble Codes (DTCs)</div>
+              {!noCodes && codes.length === 0 && (
+                <span className="text-[11px] text-green-700 font-semibold">No codes yet</span>
+              )}
+            </div>
+
+            {!noCodes && codes.length > 0 && (
+              <div className="space-y-2">
+                {codes.map((c, idx) => (
+                  <div key={idx} className="bg-white rounded-lg border p-2.5 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        placeholder="DTC Code (e.g. P0300)"
+                        value={c.code}
+                        onChange={(e) => updateCode(idx, 'code', e.target.value.toUpperCase())}
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono font-bold focus:outline-none focus:border-blue-400 bg-gray-50"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeCode(idx)}
+                        className="w-8 h-8 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 flex items-center justify-center text-sm font-bold shrink-0"
+                      >
+                        x
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Description (e.g. Random misfire detected)"
+                      value={c.description}
+                      onChange={(e) => updateCode(idx, 'description', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!noCodes && (
+              <button
+                type="button"
+                onClick={addCode}
+                className="text-blue-700 font-bold text-sm hover:underline"
+              >
+                + Add Trouble Code
+              </button>
+            )}
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => { if (!noCodes && codes.length === 0) addCode() }}
+                className={`py-2.5 rounded-xl font-bold text-sm transition-all border-2 ${
+                  !noCodes && codes.length > 0
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                Add Code
+              </button>
+              <button
+                type="button"
+                onClick={toggleNoCodes}
+                className={`py-2.5 rounded-xl font-bold text-sm transition-all border-2 ${
+                  noCodes
+                    ? 'bg-green-100 text-green-800 border-green-400'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-green-300'
+                }`}
+              >
+                {noCodes ? '\u2713 No Codes' : 'No Codes'}
+              </button>
+            </div>
+          </div>
+
+          {/* Scan Report Photos */}
+          <div>
+            <div className="text-[11px] font-black text-gray-700 uppercase tracking-wide mb-1.5">Scan Report Photos</div>
+            <PhotoCapture photos={photos || []} onChange={setPhotos} max={5} />
+          </div>
+
+          {/* Scan Notes */}
+          <div>
+            <div className="text-[11px] font-black text-gray-700 uppercase tracking-wide mb-1.5">Scan Notes</div>
+            <textarea
+              rows={3}
+              placeholder="e.g. Battery low during scan, cleared stored codes after repair..."
+              value={notes || ''}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-blue-400 resize-none bg-white"
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
