@@ -627,6 +627,9 @@ export default function AssessmentForm() {
         </div>
       )}
 
+      {/* ── ECU Scanning (mandatory) ──────────────────────────── */}
+      <EcuScanSection ecuScan={ecuScan} setEcuScan={setEcuScan} />
+
       {/* ── Labor / service required (Round 18) ─────────────────── */}
       <LaborPicker
         labors={labors}
@@ -634,9 +637,6 @@ export default function AssessmentForm() {
         otherLabor={otherLabor}
         setOtherLabor={setOtherLabor}
       />
-
-      {/* ── ECU Scanning (mandatory) ──────────────────────────── */}
-      <EcuScanSection ecuScan={ecuScan} setEcuScan={setEcuScan} />
 
       {/* ── Sticky submit bar ───────────────────────────────────── */}
       <div
