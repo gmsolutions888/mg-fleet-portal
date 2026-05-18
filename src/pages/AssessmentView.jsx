@@ -663,68 +663,76 @@ export default function AssessmentView() {
         )}
 
         {/* ── ECU Scanning results ─────────────────────────────────── */}
-        {a.ecuScan && (
-          <Card>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
-                    <path d="M9 3H4a1 1 0 00-1 1v5a1 1 0 001 1h1v4H4a1 1 0 00-1 1v5a1 1 0 001 1h5a1 1 0 001-1v-1h4v1a1 1 0 001 1h5a1 1 0 001-1v-5a1 1 0 00-1-1h-1v-4h1a1 1 0 001-1V4a1 1 0 00-1-1h-5a1 1 0 00-1 1v1h-4V4a1 1 0 00-1-1zm1 3V5h4v1a1 1 0 001 1h1v4h-1a1 1 0 00-1 1v1h-4v-1a1 1 0 00-1-1H8V7h1a1 1 0 001-1z"/>
-                  </svg>
-                </div>
-                <CardTitle>ECU Scanning</CardTitle>
+        <Card>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4 text-white">
+                  <path d="M9 3H4a1 1 0 00-1 1v5a1 1 0 001 1h1v4H4a1 1 0 00-1 1v5a1 1 0 001 1h5a1 1 0 001-1v-1h4v1a1 1 0 001 1h5a1 1 0 001-1v-5a1 1 0 00-1-1h-1v-4h1a1 1 0 001-1V4a1 1 0 00-1-1h-5a1 1 0 00-1 1v1h-4V4a1 1 0 00-1-1zm1 3V5h4v1a1 1 0 001 1h1v4h-1a1 1 0 00-1 1v1h-4v-1a1 1 0 00-1-1H8V7h1a1 1 0 001-1z"/>
+                </svg>
               </div>
-              {a.ecuScan.noCodes ? (
+              <CardTitle>ECU Scanning</CardTitle>
+            </div>
+            {a.ecuScan ? (
+              a.ecuScan.noCodes ? (
                 <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-green-100 text-green-800">No Codes</span>
               ) : (
                 <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-800">
                   {a.ecuScan.codes?.length || 0} DTC{(a.ecuScan.codes?.length || 0) !== 1 ? 's' : ''}
                 </span>
-              )}
-            </div>
+              )
+            ) : (
+              <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-gray-100 text-gray-500">Not scanned</span>
+            )}
+          </div>
 
-            {Array.isArray(a.ecuScan.codes) && a.ecuScan.codes.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {a.ecuScan.codes.map((c, i) => (
-                  <div key={i} className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 flex items-start gap-3">
-                    <span className="font-mono font-black text-red-700 text-sm shrink-0">{c.code}</span>
-                    <span className="text-sm text-gray-700 flex-1">{c.description || '—'}</span>
-                  </div>
+          {!a.ecuScan && (
+            <div className="mt-3 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-500 text-center">
+              No ECU scan data — assessed before ECU scanning was required.
+            </div>
+          )}
+
+          {a.ecuScan?.noCodes && (
+            <div className="mt-3 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5 text-sm text-green-800 font-semibold text-center">
+              No trouble codes detected
+            </div>
+          )}
+
+          {Array.isArray(a.ecuScan?.codes) && a.ecuScan.codes.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {a.ecuScan.codes.map((c, i) => (
+                <div key={i} className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 flex items-start gap-3">
+                  <span className="font-mono font-black text-red-700 text-sm shrink-0">{c.code}</span>
+                  <span className="text-sm text-gray-700 flex-1">{c.description || '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {Array.isArray(a.ecuScan?.photos) && a.ecuScan.photos.length > 0 && (
+            <div className="mt-3">
+              <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Scan Report Photos</div>
+              <div className="flex gap-2 flex-wrap">
+                {a.ecuScan.photos.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
+                    alt={`ECU scan ${i + 1}`}
+                    onClick={() => setLightboxSrc(src)}
+                  />
                 ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {a.ecuScan.noCodes && (
-              <div className="mt-3 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5 text-sm text-green-800 font-semibold text-center">
-                No trouble codes detected
-              </div>
-            )}
-
-            {Array.isArray(a.ecuScan.photos) && a.ecuScan.photos.length > 0 && (
-              <div className="mt-3">
-                <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Scan Report Photos</div>
-                <div className="flex gap-2 flex-wrap">
-                  {a.ecuScan.photos.map((src, i) => (
-                    <img
-                      key={i}
-                      src={src}
-                      className="w-20 h-20 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
-                      alt={`ECU scan ${i + 1}`}
-                      onClick={() => setLightboxSrc(src)}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {a.ecuScan.notes && (
-              <div className="mt-3">
-                <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1">Scan Notes</div>
-                <div className="text-sm text-gray-700 italic">"{a.ecuScan.notes}"</div>
-              </div>
-            )}
-          </Card>
-        )}
+          {a.ecuScan?.notes && (
+            <div className="mt-3">
+              <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1">Scan Notes</div>
+              <div className="text-sm text-gray-700 italic">"{a.ecuScan.notes}"</div>
+            </div>
+          )}
+        </Card>
 
         {/* ── Supervisor override ─────────────────────────────────── */}
         {a.supervisorCleared && (
