@@ -501,8 +501,8 @@ export default function QuickFixForm({ appointmentId, prevAssessment, header, on
       </div>
 
       <div
-        className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
-        style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0))' }}
+        className="fixed bottom-[3.5rem] md:bottom-0 left-0 right-0 z-40 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0)' }}
       >
         <div className="px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-3">
           {error && <div className="text-[11px] text-red-700 flex-1 truncate" title={error}>{error}</div>}

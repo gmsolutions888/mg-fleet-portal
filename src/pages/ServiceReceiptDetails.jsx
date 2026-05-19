@@ -321,7 +321,7 @@ function QuotationDetail({ quot, profile }) {
       {/* Sticky action bar — only rendered when this actor has something to do. */}
       {actions.length > 0 && (
         <div
-          className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+          className="fixed bottom-[3.5rem] md:bottom-0 left-0 right-0 z-40 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0)' }}
         >
           {/* Round 39 — block forward transitions when any line is ₱0. */}
@@ -1383,7 +1383,7 @@ function ReceiptDetail({ receipt }) {
       </div>
 
       <div
-        className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
+        className="fixed bottom-[3.5rem] md:bottom-0 left-0 right-0 z-40 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.05)]"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0)' }}
       >
         <div className="px-3 sm:px-6 py-3 grid grid-cols-2 gap-2">

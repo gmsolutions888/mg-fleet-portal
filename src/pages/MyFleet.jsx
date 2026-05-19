@@ -174,7 +174,7 @@ export default function MyFleet() {
 
       {/* Bulk assign bar — manager only */}
       {isManager && selected.size > 0 && (
-        <div className="fixed bottom-16 md:bottom-0 left-0 right-0 z-30 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center justify-between gap-3">
+        <div className="fixed bottom-[3.5rem] md:bottom-0 left-0 right-0 z-40 bg-white border-t shadow-[0_-4px_12px_rgba(0,0,0,0.08)] px-4 py-3 flex items-center justify-between gap-3">
           <div className="text-sm text-gray-700">
             <span className="font-black text-lg text-brand">{selected.size}</span> vehicle{selected.size === 1 ? '' : 's'} selected
           </div>
