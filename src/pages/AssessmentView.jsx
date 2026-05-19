@@ -145,7 +145,52 @@ export default function AssessmentView() {
     const pdf = new jsPDF('p', 'mm', 'a4')
     const table = (opts) => { autoTableFn(pdf, opts); return pdf.lastAutoTable }
     const w = pdf.internal.pageSize.getWidth()
+    const pageH = pdf.internal.pageSize.getHeight()
     let y = 15
+
+    // Helper: load image URL as base64 data URL for embedding in PDF.
+    // Returns { dataUrl, width, height } or null on failure.
+    const loadImage = (src) => new Promise((resolve) => {
+      if (!src) { resolve(null); return }
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.naturalWidth
+          canvas.height = img.naturalHeight
+          canvas.getContext('2d').drawImage(img, 0, 0)
+          resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.7), width: img.naturalWidth, height: img.naturalHeight })
+        } catch { resolve(null) }
+      }
+      img.onerror = () => resolve(null)
+      img.src = src
+    })
+
+    // Helper: add a row of photos to the PDF. Mutates `y` in the outer scope.
+    const addPhotos = async (photos, label) => {
+      if (!photos || photos.length === 0) return
+      const imgW = 40 // mm per photo
+      const imgH = 30
+      const gap = 4
+      const cols = Math.floor((w - 28) / (imgW + gap))
+      if (y > pageH - 50) { pdf.addPage(); y = 15 }
+      pdf.setFontSize(8)
+      pdf.setFont(undefined, 'bold')
+      pdf.text(label, 14, y)
+      y += 4
+      let col = 0
+      for (const src of photos) {
+        const img = await loadImage(src)
+        if (!img) continue
+        if (col >= cols) { col = 0; y += imgH + gap }
+        if (y + imgH > pageH - 15) { pdf.addPage(); y = 15 }
+        const x = 14 + col * (imgW + gap)
+        pdf.addImage(img.dataUrl, 'JPEG', x, y, imgW, imgH)
+        col++
+      }
+      y += imgH + gap
+    }
 
     // Title
     pdf.setFontSize(16)
@@ -244,6 +289,18 @@ export default function AssessmentView() {
         margin: { left: 14, right: 14 },
       })
       y = (pdf.lastAutoTable?.finalY || y) + 8
+
+      // Photos for each finding
+      for (const item of findings) {
+        const r = a.itemResults?.[item.code] || {}
+        const imgs = Array.isArray(r.photos) ? r.photos
+          : r.photo ? (Array.isArray(r.photo) ? r.photo : [r.photo])
+          : r.image ? (Array.isArray(r.image) ? r.image : [r.image])
+          : []
+        if (imgs.length > 0) {
+          await addPhotos(imgs, `${item.label} ${r.resultCode === 'replaced' ? '(Before / After)' : ''}`)
+        }
+      }
     }
 
     // ECU Scanning
@@ -279,6 +336,10 @@ export default function AssessmentView() {
         pdf.setFont(undefined, 'italic')
         pdf.text(`Notes: ${a.ecuScan.notes}`, 14, y)
         y += 6
+      }
+      // ECU scan report photos
+      if (Array.isArray(a.ecuScan.photos) && a.ecuScan.photos.length > 0) {
+        await addPhotos(a.ecuScan.photos, 'ECU Scan Report Photos')
       }
       y += 4
     }
