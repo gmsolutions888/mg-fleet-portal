@@ -48,6 +48,7 @@ import CaviteCatalogIngest from './pages/admin/CaviteCatalogIngest'
 import AuthComplete from './pages/AuthComplete'
 import More from './pages/More'
 import LandingSignups from './pages/LandingSignups'
+import LandingContacts from './pages/LandingContacts'
 import FixUser from './pages/FixUser'
 
 const INTERNAL = ['internal']
@@ -136,6 +137,7 @@ export default function App() {
 
           {/* Admin (gated by is_admin flag, not by role category) */}
           <Route path="/admin/fleet-signups"     element={<ProtectedRoute requireAdmin><LandingSignups /></ProtectedRoute>} />
+          <Route path="/admin/fleet-contact-us"  element={<ProtectedRoute requireAdmin><LandingContacts /></ProtectedRoute>} />
           <Route path="/admin/fleet-companies"  element={<ProtectedRoute requireAdmin><FleetCompanies /></ProtectedRoute>} />
           <Route path="/admin/users"            element={<ProtectedRoute requireAdmin><Users /></ProtectedRoute>} />
           <Route path="/admin/vehicle-catalog"  element={<ProtectedRoute requireAdmin><VehicleCatalogIngest /></ProtectedRoute>} />
