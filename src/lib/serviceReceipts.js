@@ -829,6 +829,33 @@ export async function createReceipt(kind, data) {
     company: kind === 'quotation' ? null : (fleet ? data.company : null),
     target_roles: kind === 'quotation' ? ['admin_supervisor', 'admin_assistance'] : null,
   })
+
+  // Auto-PENDING: when a quotation is created, set the linked appointment to
+  // PENDING (waiting for client approval). Trace: sourceAssessmentRwa → assessment → appointmentId.
+  if (kind === 'quotation' && data.sourceAssessmentRwa) {
+    try {
+      const assessSnap = await getDocs(query(
+        collection(db, 'assessments'),
+        where('rwaNumber', '==', data.sourceAssessmentRwa),
+      ))
+      const apptId = assessSnap.docs[0]?.data()?.appointmentId
+      if (apptId) {
+        const apptDoc = await getDoc(doc(db, 'appointments', apptId))
+        const pendableStatuses = new Set(['DIAGNOSED', 'ONGOING'])
+        if (apptDoc.exists() && pendableStatuses.has(apptDoc.data().status)) {
+          await updateDoc(doc(db, 'appointments', apptId), {
+            status: 'PENDING',
+            note: `Quotation ${code} created — awaiting approval`,
+            updatedAt: serverTimestamp(),
+            updatedBy: uid,
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('[serviceReceipts] auto-PENDING failed:', err?.message || err)
+    }
+  }
+
   return { id: ref.id, code }
 }
 

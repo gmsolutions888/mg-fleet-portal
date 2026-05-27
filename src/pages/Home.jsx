@@ -6,9 +6,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { BRANCHES } from '../lib/dummyData'
 import { useAuth } from '../context/AuthContext'
-import { canAssess, canReviewAtBranch, canBookingRequests } from '../lib/roles'
+import { canReviewAtBranch, canBookingRequests } from '../lib/roles'
 import { updateAppointmentStatus } from '../lib/appointments'
-import { getApprovedQuotationForPlate } from '../lib/serviceReceipts'
 
 const WARRIOR_ROLES = new Set(['field_assessor', 'warrior', 'dispatcher', 'technician'])
 const CROSS_BRANCH_ROLES = new Set(['general_manager', 'call_center'])
@@ -296,85 +295,59 @@ function CardView({ byStatus, filter }) {
 
 function AppointmentCard({ appt }) {
   const { profile } = useAuth()
-  const role = profile?.role
-  const showAssess = canAssess(role)
-  const canAssign = canReviewAtBranch(role) || canBookingRequests(role)
-  const isFleetMgr = String(role).toLowerCase() === 'general_manager'
-  const isBranchUser = canReviewAtBranch(role) && !isFleetMgr
-  const isPending = appt.status === 'PENDING_BRANCH_APPROVAL' || appt.status === 'PENDING_BOOKING'
-  const [statusBusy, setStatusBusy] = useState(false)
-  const [statusError, setStatusError] = useState(null)
+  const role = String(profile?.role || '').toLowerCase().trim()
+  const myName = (profile?.name || profile?.user_fullname || '').toLowerCase().trim()
+  const navigate = useNavigate()
 
-  // Check if fix has been made (re-assessment with replaced items exists)
-  // fixStatus: check if the current booking's assessment has replaced items
-  // (fix done, waiting for invoice) or if a branch invoice was generated for
-  // this booking. Invoices are tied to bookings, not plates — so we trace
-  // appointment → rwaNumber → quotation → invoice.
-  const [fixStatus, setFixStatus] = useState(null) // null=loading, 'none', 'fixed', 'invoiced'
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [errorModal, setErrorModal] = useState(null)
+  const [pendingNoteModal, setPendingNoteModal] = useState(false)
+  const [pendingNote, setPendingNote] = useState('')
+
+  const hasMechanic = appt.mechanic && appt.mechanic !== 'Not yet assigned'
+  const isMyAssignment = hasMechanic && (appt.mechanic || '').toLowerCase().trim() === myName
+  const s = appt.status
+
+  // Check quotation state for this booking:
+  //   hasQuotation = a quotation exists (any status)
+  //   quotationApproved = quotation is APPROVED_FINAL
+  const [hasQuotation, setHasQuotation] = useState(false)
+  const [quotationApproved, setQuotationApproved] = useState(false)
   useEffect(() => {
-    if (!appt.plateNo || !appt.id) { setFixStatus('none'); return }
+    if (!appt.id || (s !== 'PENDING' && s !== 'DIAGNOSED')) {
+      setHasQuotation(false); setQuotationApproved(false); return
+    }
     let cancelled = false
     ;(async () => {
       try {
         const { getDocs, query, where, collection } = await import('firebase/firestore')
         const { db } = await import('../lib/firebase')
-
-        // Check if this booking's quotation has a branch invoice
-        if (appt.rwaNumber) {
-          // Find quotation linked to this appointment's assessment
+        const assessSnap = await getDocs(query(collection(db, 'assessments'), where('appointmentId', '==', appt.id)))
+        for (const ad of assessSnap.docs) {
+          const rwa = ad.data().rwaNumber
+          if (!rwa) continue
           const qSnap = await getDocs(query(
             collection(db, 'serviceReceipts'),
             where('kind', '==', 'quotation'),
-            where('plateNo', '==', appt.plateNo),
+            where('sourceAssessmentRwa', '==', rwa),
           ))
           for (const qd of qSnap.docs) {
-            const q = qd.data()
-            // Match quotation to this appointment by checking appointmentId or rwaNumber
-            if (q.appointmentId !== appt.id && q.fromAssessment !== appt.rwaNumber) continue
-            // Check if a branch invoice exists for this quotation
-            const invSnap = await getDocs(query(
-              collection(db, 'branchInvoices'),
-              where('quotationCode', '==', q.code),
-            ))
-            const activeInv = invSnap.docs.find((d) => d.data().status !== 'VOID')
-            if (activeInv) {
-              if (!cancelled) setFixStatus('invoiced')
+            if (!cancelled) setHasQuotation(true)
+            if (qd.data().status === 'APPROVED_FINAL') {
+              if (!cancelled) setQuotationApproved(true)
               return
             }
           }
         }
-
-        // Check if this appointment's assessment has replaced items (fix done)
-        if (appt.assessmentId || appt.rwaNumber) {
-          const assessSnap = await getDocs(query(collection(db, 'assessments'), where('appointmentId', '==', appt.id)))
-          const hasFixed = assessSnap.docs.some((d) =>
-            Object.values(d.data().itemResults || {}).some((r) => r.resultCode === 'replaced')
-          )
-          if (!cancelled) setFixStatus(hasFixed ? 'fixed' : 'none')
-        } else {
-          if (!cancelled) setFixStatus('none')
-        }
-      } catch { if (!cancelled) setFixStatus('none') }
+      } catch {}
     })()
     return () => { cancelled = true }
-  }, [appt.id, appt.plateNo, appt.rwaNumber, appt.assessmentId, appt.status])
-
-  const hasMechanic = appt.mechanic && appt.mechanic !== 'Not yet assigned'
-  const assessHref = hasMechanic
-    ? `/appointments/${appt.id}/assess`
-    : `/appointments/${appt.id}/assign?then=assess`
-  const assignHref = `/appointments/${appt.id}/assign`
-
-  const navigate = useNavigate()
-
-  const [errorModal, setErrorModal] = useState(null)
-  const [assignModal, setAssignModal] = useState(false)
-  const [confirmComplete, setConfirmComplete] = useState(false)
+  }, [appt.id, s])
 
   const moveStatus = async (nextStatus, note, e) => {
-    e.stopPropagation()
+    if (e) e.stopPropagation()
     if (statusBusy) return
-    setStatusBusy(true); setStatusError(null)
+    setStatusBusy(true)
     try { await updateAppointmentStatus(appt.id, nextStatus, note) }
     catch (err) {
       console.error('[home] status update failed:', err)
@@ -383,39 +356,32 @@ function AppointmentCard({ appt }) {
     finally { setStatusBusy(false) }
   }
 
-  const canViewInvoice = ['general_manager', 'admin_supervisor', 'operations_manager', 'admin_assistance', 'finance', 'finance_head'].includes(role)
-
   const handleCardClick = () => {
-    // Completed items: link to invoice for authorized roles
-    if (appt.status === 'COMPLETED' && canViewInvoice) {
-      const invoiceMatch = (appt.note || '').match(/invoice\s+(INV-[^\s]+)/i)
-      if (invoiceMatch) {
-        navigate(`/branch-invoices/${invoiceMatch[1]}`)
-        return
-      }
+    if (s === 'COMPLETED') {
+      const invoiceMatch = (appt.note || '').match(/invoice\s+([\w-]+)/i)
+      if (invoiceMatch) { navigate(`/branch-invoices/${invoiceMatch[1]}`); return }
     }
-    // Diagnosed or Ongoing: link to the latest assessment
-    if ((appt.status === 'DIAGNOSED' || appt.status === 'ONGOING') && appt.rwaNumber) {
-      navigate(`/assessments/${appt.rwaNumber}`)
-      return
+    if ((s === 'DIAGNOSED' || s === 'ONGOING') && appt.rwaNumber) {
+      navigate(`/assessments/${appt.rwaNumber}`); return
     }
-    if (canAssign && !isPending) navigate(assignHref)
-    else navigate(`/vehicles/${appt.plateNo}`)
+    if (s === 'ARRIVED') {
+      if (!hasMechanic) { navigate(`/appointments/${appt.id}/assign`); return }
+      navigate(`/vehicles/${appt.plateNo}`); return
+    }
+    navigate(`/vehicles/${appt.plateNo}`)
   }
 
+  // --- Render ---
   return (
     <div className="bg-white border rounded-2xl p-2.5 shadow-sm hover:shadow-md transition-shadow cursor-pointer" onClick={handleCardClick}>
       <div className="h-16 flex items-center justify-center mb-1">
         <VehicleImage model={appt.model} className="max-h-16 object-contain" />
       </div>
-      <div className="text-sm font-black text-gray-900 tracking-wide">
-        {appt.plateNo}
-      </div>
+      <div className="text-sm font-black text-gray-900 tracking-wide">{appt.plateNo}</div>
       {appt.company && <div className="text-[10px] text-brand font-bold truncate">{appt.company}</div>}
       <div className="text-[10px] text-gray-500 truncate">
         {(appt.brandModel || '').replace('Toyota - ', '')} {appt.yearModel}
       </div>
-
       {appt.scheduledAt && (
         <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-600">
           <Icon name="calendar" className="w-3 h-3 text-sky-600" />
@@ -437,138 +403,114 @@ function AppointmentCard({ appt }) {
       <div className="mt-2 text-[10px] text-gray-600 bg-gray-50 rounded-lg px-2 py-1 leading-tight">
         {appt.note ? `"${appt.note}"` : '-'}
       </div>
-      {fixStatus === 'fixed' && appt.status === 'DIAGNOSED' && (
-        <div className="mt-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-          Waiting to create invoice
-        </div>
-      )}
-      {fixStatus === 'invoiced' && appt.status === 'DIAGNOSED' && (
-        <div className="mt-1.5 text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-lg px-2 py-1">
-          Invoice created
-        </div>
-      )}
-      {/* Mark Arrived — visible to all staff when vehicle is BOOKED/CONFIRMED/TENTATIVE */}
-      {!isBranchUser && (appt.status === 'BOOKED' || appt.status === 'CONFIRMED' || appt.status === 'TENTATIVE') && (
-        <button
-          type="button"
-          disabled={statusBusy}
+
+      {/* ── Status-specific action buttons ─────────────────────── */}
+
+      {/* BOOKED / CONFIRMED / TENTATIVE → Mark Arrived (all staff) */}
+      {(s === 'BOOKED' || s === 'CONFIRMED' || s === 'TENTATIVE') && (
+        <button type="button" disabled={statusBusy}
           onClick={(e) => moveStatus('ARRIVED', 'Vehicle arrived', e)}
-          className="block mt-2 w-full bg-sky-100 text-sky-700 hover:bg-sky-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center disabled:opacity-40"
-        >
+          className="block mt-2 w-full bg-sky-100 text-sky-700 hover:bg-sky-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center disabled:opacity-40">
           {statusBusy ? '...' : 'Mark Arrived'}
         </button>
       )}
-      {/* ASSESS — show on ARRIVED for all staff */}
-      {appt.status === 'ARRIVED' && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (!hasMechanic) {
-              setAssignModal(true)
-            } else {
-              navigate(assessHref)
-            }
-          }}
-          className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center"
-        >
+
+      {/* ARRIVED → Assess (assigned mechanic or admin_supervisor) */}
+      {s === 'ARRIVED' && hasMechanic && (isMyAssignment || role === 'admin_supervisor') && (
+        <button type="button"
+          onClick={(e) => { e.stopPropagation(); navigate(`/appointments/${appt.id}/assess`) }}
+          className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center">
           ASSESS
         </button>
       )}
-      {showAssess && appt.status === 'ONGOING' && (
-        <ReAssessButton appt={appt} navigate={navigate} />
+
+      {/* DIAGNOSED → Awaiting quotation / Awaiting Invoice */}
+      {s === 'DIAGNOSED' && (
+        <div className={`mt-1.5 text-[10px] font-bold rounded-lg px-2 py-1 text-center ${
+          hasQuotation
+            ? 'text-amber-700 bg-amber-50 border border-amber-200'
+            : 'text-indigo-700 bg-indigo-50 border border-indigo-200'
+        }`}>
+          {hasQuotation ? 'Awaiting Invoice' : 'Awaiting quotation'}
+        </div>
       )}
-      {isBranchUser && !isPending && (() => {
-        const s = appt.status
-        const btns = []
-        if (s === 'BOOKED' || s === 'CONFIRMED' || s === 'TENTATIVE') {
-          btns.push({ next: 'ARRIVED', label: 'Mark Arrived', note: 'Vehicle arrived', cls: 'bg-sky-100 text-sky-700 hover:bg-sky-200' })
-        }
-        if (s === 'ARRIVED') {
-          btns.push({ next: 'ONGOING', label: 'Start Service', note: 'Service started', cls: 'bg-blue-100 text-blue-700 hover:bg-blue-200' })
-        }
-        if (s === 'DIAGNOSED' && fixStatus === 'none') {
-          btns.push({ next: 'ONGOING', label: 'Start Service', note: 'Service started', cls: 'bg-blue-100 text-blue-700 hover:bg-blue-200' })
-        }
-        if (s === 'ONGOING') {
-          btns.push({ next: 'COMPLETED', label: 'Complete', note: 'Service completed', cls: 'bg-green-100 text-green-700 hover:bg-green-200' })
-          btns.push({ next: 'PENDING', label: 'Hold', note: 'Awaiting parts/approval', cls: 'bg-amber-100 text-amber-700 hover:bg-amber-200' })
-        }
-        if (s === 'PENDING') {
-          btns.push({ next: 'ONGOING', label: 'Resume', note: 'Service resumed', cls: 'bg-blue-100 text-blue-700 hover:bg-blue-200' })
-          btns.push({ next: 'COMPLETED', label: 'Complete', note: 'Service completed', cls: 'bg-green-100 text-green-700 hover:bg-green-200' })
-        }
-        if (s === 'COMPLETED') {
-          btns.push({ next: 'ONGOING', label: 'Redo', note: 'Re-opened for additional work', cls: 'bg-red-100 text-red-700 hover:bg-red-200' })
-        }
-        if (btns.length === 0) return null
-        return (
-          <div className="mt-2 grid gap-1" style={{ gridTemplateColumns: `repeat(${btns.length}, 1fr)` }}>
-            {btns.map((b) => (
-              <button key={b.next} disabled={statusBusy} onClick={(e) => {
-                if (b.next === 'COMPLETED') { e.stopPropagation(); setConfirmComplete(true) }
-                else moveStatus(b.next, b.note, e)
-              }}
-                className={`text-[10px] font-bold px-2 py-1.5 rounded-lg disabled:opacity-40 ${b.cls}`}>
-                {statusBusy ? '...' : b.label}
-              </button>
-            ))}
-          </div>
-        )
-      })()}
-      {confirmComplete && (
+
+      {/* ONGOING → Re-Assess (assigned mechanic or admin_supervisor) */}
+      {s === 'ONGOING' && hasMechanic && (isMyAssignment || role === 'admin_supervisor') && (
+        <button type="button"
+          onClick={(e) => { e.stopPropagation(); navigate(`/appointments/${appt.id}/assess?type=Re-Assessment`) }}
+          className="block mt-2 w-full bg-gray-900 hover:bg-black text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center">
+          ASSESS
+        </button>
+      )}
+
+      {/* ONGOING → Move to Pending (with note modal) */}
+      {s === 'ONGOING' && (
+        <button type="button"
+          onClick={(e) => { e.stopPropagation(); setPendingNoteModal(true) }}
+          className="block mt-2 w-full bg-amber-100 text-amber-700 hover:bg-amber-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center">
+          Move to Pending
+        </button>
+      )}
+
+      {/* PENDING → Set to Ongoing (only when quotation is APPROVED_FINAL) */}
+      {s === 'PENDING' && quotationApproved && (
+        <button type="button" disabled={statusBusy}
+          onClick={(e) => moveStatus('ONGOING', 'Quotation approved — service resumed', e)}
+          className="block mt-2 w-full bg-blue-100 text-blue-700 hover:bg-blue-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center disabled:opacity-40">
+          {statusBusy ? '...' : 'Set to Ongoing'}
+        </button>
+      )}
+      {s === 'PENDING' && !quotationApproved && (
+        <div className="mt-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 text-center">
+          Awaiting quotation approval
+        </div>
+      )}
+      {/* PENDING → Mark as Completed */}
+      {s === 'PENDING' && (
+        <button type="button" disabled={statusBusy}
+          onClick={(e) => moveStatus('COMPLETED', 'Service completed', e)}
+          className="block mt-2 w-full bg-green-100 text-green-700 hover:bg-green-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center disabled:opacity-40">
+          {statusBusy ? '...' : 'Mark as Completed'}
+        </button>
+      )}
+
+
+      {/* ── Modals ─────────────────────────────────────────────── */}
+
+      {/* Move to Pending — note modal */}
+      {pendingNoteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="px-5 py-4">
-              <div className="text-sm font-bold text-gray-900 mb-2">Mark as Complete</div>
-              <div className="text-sm text-gray-600">Mark <strong>{appt.plateNo}</strong> as service completed?</div>
+              <div className="text-sm font-bold text-amber-700 mb-2">Move to Pending</div>
+              <div className="text-sm text-gray-600 mb-3">Add a note for why <strong>{appt.plateNo}</strong> is being held.</div>
+              <textarea
+                rows={3}
+                placeholder="e.g. Waiting for parts, awaiting client approval..."
+                value={pendingNote}
+                onChange={(e) => setPendingNote(e.target.value)}
+                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400 resize-none"
+                onClick={(e) => e.stopPropagation()}
+              />
             </div>
             <div className="px-5 pb-5 flex gap-3">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setConfirmComplete(false) }}
-                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
-              >
+              <button type="button"
+                onClick={(e) => { e.stopPropagation(); setPendingNoteModal(false); setPendingNote('') }}
+                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl">
                 Cancel
               </button>
-              <button
-                type="button"
-                disabled={statusBusy}
-                onClick={(e) => { setConfirmComplete(false); moveStatus('COMPLETED', 'Service completed', e) }}
-                className="flex-1 text-sm font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-40 px-4 py-3 rounded-xl shadow"
-              >
-                {statusBusy ? 'Saving...' : 'Complete'}
+              <button type="button" disabled={statusBusy || !pendingNote.trim()}
+                onClick={(e) => { setPendingNoteModal(false); moveStatus('PENDING', pendingNote.trim() || 'Moved to pending', e); setPendingNote('') }}
+                className="flex-1 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-40 px-4 py-3 rounded-xl shadow">
+                {statusBusy ? 'Saving...' : 'Move to Pending'}
               </button>
             </div>
           </div>
         </div>
       )}
-      {assignModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-            <div className="px-5 py-4">
-              <div className="text-sm font-bold text-amber-700 mb-2">No mechanic assigned</div>
-              <div className="text-sm text-gray-600">No mechanic assigned to <strong>{appt.plateNo}</strong>. Assign one now?</div>
-            </div>
-            <div className="px-5 pb-5 flex gap-3">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setAssignModal(false) }}
-                className="flex-1 text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setAssignModal(false); navigate(`/appointments/${appt.id}/assign?then=assess`) }}
-                className="flex-1 text-sm font-bold text-white bg-brand hover:bg-brand-dark px-4 py-3 rounded-xl shadow"
-              >
-                Assign Mechanic
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
+      {/* Error modal */}
       {errorModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4" onClick={(e) => e.stopPropagation()}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
@@ -577,11 +519,9 @@ function AppointmentCard({ appt }) {
               <div className="text-sm text-gray-600">{errorModal}</div>
             </div>
             <div className="px-5 pb-5">
-              <button
-                type="button"
+              <button type="button"
                 onClick={(e) => { e.stopPropagation(); setErrorModal(null) }}
-                className="w-full text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl"
-              >
+                className="w-full text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-3 rounded-xl">
                 OK
               </button>
             </div>
@@ -589,31 +529,6 @@ function AppointmentCard({ appt }) {
         </div>
       )}
     </div>
-  )
-}
-
-function ReAssessButton({ appt, navigate }) {
-  const [hasApproved, setHasApproved] = useState(null) // null=loading, true/false
-  useEffect(() => {
-    if (!appt.plateNo) { setHasApproved(false); return }
-    getApprovedQuotationForPlate(appt.plateNo).then((q) => setHasApproved(Boolean(q)))
-      .catch(() => setHasApproved(false))
-  }, [appt.plateNo])
-
-  if (hasApproved === null) return null // loading
-  if (!hasApproved) return null // no approved quotation
-
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation()
-        navigate(`/appointments/${appt.id}/assess?type=Re-Assessment`)
-      }}
-      className="block mt-2 w-full bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold rounded-lg px-2 py-1.5 text-center"
-    >
-      RE-ASSESS
-    </button>
   )
 }
 

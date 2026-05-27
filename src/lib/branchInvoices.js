@@ -329,8 +329,31 @@ export async function generateBranchInvoice(quotationId, { byProfile, plateAsses
     company: null,
   })
 
-  // Auto-complete removed — appointment status is managed manually by staff
-  // via the Home page status buttons. Invoices are tied to bookings, not plates.
+  // Auto-complete: when a branch invoice is created, mark the linked appointment
+  // as COMPLETED. Trace: quotation.sourceAssessmentRwa → assessment → appointmentId.
+  if (quot.sourceAssessmentRwa) {
+    try {
+      const assessSnap = await getDocs(query(
+        collection(db, 'assessments'),
+        where('rwaNumber', '==', quot.sourceAssessmentRwa),
+      ))
+      const apptId = assessSnap.docs[0]?.data()?.appointmentId
+      if (apptId) {
+        const apptDoc = await getDoc(doc(db, 'appointments', apptId))
+        const activeStatuses = new Set(['ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
+        if (apptDoc.exists() && activeStatuses.has(apptDoc.data().status)) {
+          await updateDoc(doc(db, 'appointments', apptId), {
+            status: 'COMPLETED',
+            note: `Service completed — invoice ${code} issued`,
+            updatedAt: serverTimestamp(),
+            updatedBy: uid,
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('[branchInvoices] auto-complete failed:', err?.message || err)
+    }
+  }
 
   return { id: ref.id, ...payload, issuedAt: nowIso }
 }

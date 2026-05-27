@@ -344,8 +344,38 @@ export async function generateClientInvoice(branchInvoiceId, { companyTerms, byP
     company: bi.company,
   })
 
-  // Auto-complete removed — appointment status is managed manually by staff
-  // via the Home page status buttons. Invoices are tied to bookings, not plates.
+  // Auto-complete: when a client invoice is created, mark the linked appointment
+  // as COMPLETED. Trace: bi.quotationCode → quotation.sourceAssessmentRwa → assessment → appointmentId.
+  if (bi.quotationCode) {
+    try {
+      const qSnap = await getDocs(query(
+        collection(db, 'serviceReceipts'),
+        where('code', '==', bi.quotationCode),
+      ))
+      const rwa = qSnap.docs[0]?.data()?.sourceAssessmentRwa
+      if (rwa) {
+        const assessSnap = await getDocs(query(
+          collection(db, 'assessments'),
+          where('rwaNumber', '==', rwa),
+        ))
+        const apptId = assessSnap.docs[0]?.data()?.appointmentId
+        if (apptId) {
+          const apptDoc = await getDoc(doc(db, 'appointments', apptId))
+          const activeStatuses = new Set(['ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
+          if (apptDoc.exists() && activeStatuses.has(apptDoc.data().status)) {
+            await updateDoc(doc(db, 'appointments', apptId), {
+              status: 'COMPLETED',
+              note: `Service completed — invoice ${code} forwarded to fleet`,
+              updatedAt: serverTimestamp(),
+              updatedBy: uid,
+            })
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[clientInvoices] auto-complete failed:', err?.message || err)
+    }
+  }
 
   return { id: ref.id, ...payload, issuedAt: nowIso }
 }
