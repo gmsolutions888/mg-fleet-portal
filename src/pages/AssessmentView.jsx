@@ -811,7 +811,7 @@ export default function AssessmentView() {
         </Card>
 
         {/* ── PMS Schedule — vehicle-wide maintenance status ────────── */}
-        {a.rwaNumber === 'RWA-SEED-LCV2906' && (
+        {rwa === 'RWA-SEED-LCV2906' && (
           <Card>
             <div className="flex items-center justify-between">
               <CardTitle>🗓 PMS Schedule</CardTitle>
