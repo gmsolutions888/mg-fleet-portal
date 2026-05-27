@@ -788,6 +788,12 @@ export async function createReceipt(kind, data) {
     // the client can review findings before approving + downstream
     // pages can deep-link to it.
     sourceAssessmentRwa: data.sourceAssessmentRwa || null,
+    // Broker markup snapshot — null when no markup applied.
+    brokerMarkup: data.brokerMarkup || null,
+    baseLaborTotal: data.brokerMarkup ? items.filter((i) => i.type === 'Labor').reduce((s, i) => s + (Number(i.baseUnitCost) || i.unitCost) * i.qty, 0) : null,
+    baseMaterialsTotal: data.brokerMarkup ? items.filter((i) => i.type !== 'Labor').reduce((s, i) => s + (Number(i.baseUnitCost) || i.unitCost) * i.qty, 0) : null,
+    baseEstimatedTotal: data.brokerMarkup ? items.reduce((s, i) => s + (Number(i.baseUnitCost) || i.unitCost) * i.qty, 0) : null,
+    markupAmount: data.brokerMarkup ? (laborTotal + materialsTotal) - items.reduce((s, i) => s + (Number(i.baseUnitCost) || i.unitCost) * i.qty, 0) : null,
     // Quotations start at DRAFT and walk the approval chain; receipts stay
     // on the legacy OPEN/PAID/CANCELLED flow until Round 12.
     status: kind === 'quotation' ? QUOT_STATUS.DRAFT : 'OPEN',

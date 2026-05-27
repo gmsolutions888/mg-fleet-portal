@@ -35,6 +35,8 @@ const VALID_PAYMENT_TERMS = ['CASH', 'NET_30', 'NET_60', 'NET_90']
 
 function normalizeWritable(data) {
   const terms = String(data.paymentTerms || 'NET_30').toUpperCase()
+  const hasBrokerMarkup = Boolean(data.hasBrokerMarkup)
+  const rawPct = Number(data.brokerMarkupPercent) || 0
   const payload = {
     name: (data.name || '').trim(),
     code: (data.code || '').trim().toUpperCase(),
@@ -42,6 +44,8 @@ function normalizeWritable(data) {
     contactPhone: (data.contactPhone || '').trim(),
     paymentTerms: VALID_PAYMENT_TERMS.includes(terms) ? terms : 'NET_30',
     isActive: data.isActive !== false,
+    hasBrokerMarkup,
+    brokerMarkupPercent: hasBrokerMarkup ? Math.min(100, Math.max(0, rawPct)) : 0,
   }
   if (!payload.name) throw new Error('Company name is required.')
   if (!payload.code) throw new Error('Company code is required.')

@@ -13,6 +13,7 @@ import { formatMoney } from '../lib/dummyData'
 import { watchVehicles } from '../lib/vehicles'
 import { watchUsers } from '../lib/users'
 import { createReceipt } from '../lib/serviceReceipts'
+import { getFleetCompanyByName } from '../lib/fleetCompanies'
 import {
   enrichItemsWithCatalogPrices,
   extractAssessmentNotes, extractHeaderPrefill,
@@ -108,6 +109,26 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
   ])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
+
+  // Broker markup — look up fleet company when vehicle.company is known
+  const [brokerInfo, setBrokerInfo] = useState(null) // { percent }
+  const [applyBrokerMarkup, setApplyBrokerMarkup] = useState(false)
+  useEffect(() => {
+    const companyName = vehicle?.company
+    if (!companyName) { setBrokerInfo(null); setApplyBrokerMarkup(false); return }
+    let cancelled = false
+    getFleetCompanyByName(companyName).then((co) => {
+      if (cancelled) return
+      if (co?.hasBrokerMarkup && Number(co.brokerMarkupPercent) > 0) {
+        setBrokerInfo({ percent: Number(co.brokerMarkupPercent) })
+        setApplyBrokerMarkup(false)
+      } else {
+        setBrokerInfo(null)
+        setApplyBrokerMarkup(false)
+      }
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [vehicle?.company])
 
   // Sync to selected vehicle when list arrives / plate changes. Skipped
   // when the assessment prefill already wrote the odometer/customer —
@@ -214,8 +235,14 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
     return () => { cancelled = true }
   }, [fromAssessment])
 
-  const laborTotal = items.filter((i) => i.type === 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
-  const matTotal   = items.filter((i) => i.type !== 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
+  const markupMultiplier = applyBrokerMarkup && brokerInfo ? 1 + brokerInfo.percent / 100 : 1
+  const hasMarkup = markupMultiplier !== 1
+  // Display items apply markup to unitCost for rendering; base items stay editable
+  const displayItems = hasMarkup
+    ? items.map((i) => ({ ...i, unitCost: Math.round(i.unitCost * markupMultiplier * 100) / 100 }))
+    : items
+  const laborTotal = displayItems.filter((i) => i.type === 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
+  const matTotal   = displayItems.filter((i) => i.type !== 'Labor').reduce((s, i) => s + i.qty * i.unitCost, 0)
   const grandTotal = laborTotal + matTotal
 
   const addRow = () => setItems([...items, { type: 'Parts/Materials', qty: 1, description: '', unitCost: 0 }])
@@ -237,10 +264,18 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
         mechanic,
         personInCharge: profile?.name || 'Admin',
         scheduleType: 'SCHEDULED',
-        items,
+        items: applyBrokerMarkup && brokerInfo
+          ? items.map((i) => ({
+              ...i,
+              baseUnitCost: i.unitCost,
+              baseSubTotal: i.qty * i.unitCost,
+              unitCost: Math.round(i.unitCost * markupMultiplier * 100) / 100,
+            }))
+          : items,
         notes,
         sourceAssessmentRwa: fromAssessment || null,
         byProfile: profile,
+        brokerMarkup: applyBrokerMarkup && brokerInfo ? { percent: brokerInfo.percent, companyName: vehicle.company } : null,
       })
       navigate(`/service-receipts/${code}`)
     } catch (err) {
@@ -334,7 +369,7 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
 
           {/* Mobile: vertical card stack */}
           <div className="lg:hidden space-y-3">
-            {items.map((row, i) => (
+            {displayItems.map((row, i) => (
               <LineItemCard
                 key={i}
                 index={i}
@@ -362,7 +397,7 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
               <table className="w-full text-sm">
                 <LineItemHeader />
                 <tbody className="divide-y">
-                  {items.map((row, i) => (
+                  {displayItems.map((row, i) => (
                     <LineItemRow
                       key={i}
                       row={row}
@@ -381,6 +416,25 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
           </div>
         </section>
 
+        {isQuotation && brokerInfo && (
+          <div className="rounded-xl px-3 py-2.5 text-sm border bg-amber-50 border-amber-200 text-amber-900">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={applyBrokerMarkup}
+                onChange={(e) => setApplyBrokerMarkup(e.target.checked)}
+                className="w-4 h-4 accent-amber-600"
+              />
+              <span className="font-bold">Apply {brokerInfo.percent}% Broker Markup</span>
+            </label>
+            <div className="text-xs mt-1 ml-6 text-amber-700">
+              {applyBrokerMarkup
+                ? `A ${brokerInfo.percent}% markup will be added on top of all line item prices when this quotation is saved.`
+                : 'Markup is available for this company but will not be applied.'}
+            </div>
+          </div>
+        )}
+
         <Section title="Assignment & Notes">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
             <Field label="Assigned Mechanic">
@@ -391,11 +445,11 @@ export default function ServiceReceiptCreate({ kind = 'receipt' }) {
                 ))}
               </select>
             </Field>
-            <Field label="Total Labor">
-              <div className="text-right py-2 font-bold text-gray-800">{formatMoney(laborTotal)}</div>
+            <Field label="Total Labor" className="text-right">
+              <div className="py-2 font-bold text-gray-800">{formatMoney(laborTotal)}</div>
             </Field>
-            <Field label="Total Materials">
-              <div className="text-right py-2 font-bold text-gray-800">{formatMoney(matTotal)}</div>
+            <Field label="Total Materials" className="text-right">
+              <div className="py-2 font-bold text-gray-800">{formatMoney(matTotal)}</div>
             </Field>
             <Field label="Notes" className="sm:col-span-3">
               <textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

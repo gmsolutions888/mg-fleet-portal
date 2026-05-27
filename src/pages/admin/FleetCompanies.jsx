@@ -9,7 +9,7 @@ import { MGFMS_CLIENTS } from '../../lib/dummyData'
 import Icon from '../../components/ui/Icon'
 import PageHero, { HeroStat } from '../../components/ui/PageHero'
 
-const EMPTY = { name: '', code: '', contactEmail: '', contactPhone: '', paymentTerms: 'NET_30', isActive: true }
+const EMPTY = { name: '', code: '', contactEmail: '', contactPhone: '', paymentTerms: 'NET_30', isActive: true, hasBrokerMarkup: false, brokerMarkupPercent: 0 }
 
 const PAYMENT_TERM_OPTIONS = [
   { value: 'CASH',   label: 'Cash on receipt' },
@@ -85,6 +85,8 @@ export default function FleetCompanies() {
       contactPhone: row.contactPhone || '',
       paymentTerms: row.paymentTerms || 'NET_30',
       isActive: row.isActive !== false,
+      hasBrokerMarkup: Boolean(row.hasBrokerMarkup),
+      brokerMarkupPercent: Number(row.brokerMarkupPercent) || 0,
     })
     setEditingId(row.id)
     setSaveError(null)
@@ -215,6 +217,30 @@ export default function FleetCompanies() {
                 </select>
               </Field>
             </div>
+            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={form.hasBrokerMarkup}
+                  onChange={(e) => setForm({ ...form, hasBrokerMarkup: e.target.checked, brokerMarkupPercent: e.target.checked ? form.brokerMarkupPercent : 0 })}
+                />
+                With broker / middleman
+              </label>
+              {form.hasBrokerMarkup && (
+                <Field label="Broker markup %" hint="Percentage added on top of MG base prices for client billing.">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={form.brokerMarkupPercent}
+                    onChange={(e) => setForm({ ...form, brokerMarkupPercent: e.target.value })}
+                    placeholder="e.g. 15"
+                    className="input w-32"
+                  />
+                </Field>
+              )}
+            </div>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -280,6 +306,7 @@ export default function FleetCompanies() {
                 <th className="px-4 py-3 text-left font-medium">Code</th>
                 <th className="px-4 py-3 text-left font-medium">Contact</th>
                 <th className="px-4 py-3 text-left font-medium">Terms</th>
+                <th className="px-4 py-3 text-left font-medium">Broker Markup</th>
                 <th className="px-4 py-3 text-left font-medium">Status</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
@@ -305,6 +332,15 @@ export default function FleetCompanies() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 font-mono">{termsLabel(row.paymentTerms)}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {row.hasBrokerMarkup ? (
+                      <span className="inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">
+                        +{Number(row.brokerMarkupPercent) || 0}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {row.isActive === false ? (
                       <span className="inline-block px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-500">
@@ -351,6 +387,13 @@ function CompanyCard({ row, onEdit, onToggleActive }) {
         <div className="text-[11px] text-gray-500">
           Terms: <span className="font-bold text-gray-700">{termsLabel(row.paymentTerms)}</span>
         </div>
+        {row.hasBrokerMarkup && (
+          <div className="text-[11px]">
+            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">
+              Broker +{Number(row.brokerMarkupPercent) || 0}%
+            </span>
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <button
@@ -383,7 +426,7 @@ function Field({ label, hint, children }) {
 function EmptyRow({ children, className = 'text-gray-400' }) {
   return (
     <tr>
-      <td colSpan={6} className={`px-4 py-8 text-center ${className}`}>
+      <td colSpan={7} className={`px-4 py-8 text-center ${className}`}>
         {children}
       </td>
     </tr>

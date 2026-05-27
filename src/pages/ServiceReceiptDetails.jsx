@@ -82,7 +82,7 @@ export default function ServiceReceiptDetails() {
 
   return isQuotation
     ? <QuotationDetail quot={receipt} profile={profile} />
-    : <ReceiptDetail receipt={receipt} />
+    : <ReceiptDetail receipt={receipt} profile={profile} />
 }
 
 // ── Quotation view ───────────────────────────────────────────────────────
@@ -311,7 +311,7 @@ function QuotationDetail({ quot, profile }) {
         ) : (
           <>
             <GroupedItemsCard quot={quot} />
-            <TotalsCard receipt={quot} />
+            <TotalsCard receipt={quot} profile={profile} />
           </>
         )}
 
@@ -1338,7 +1338,7 @@ function actionLabel(action) {
 
 // ── Receipt view (legacy — unchanged shell) ──────────────────────────────
 
-function ReceiptDetail({ receipt }) {
+function ReceiptDetail({ receipt, profile }) {
   const [cancelling, setCancelling] = useState(false)
   const [localStatus, setLocalStatus] = useState(receipt.status)
 
@@ -1379,7 +1379,7 @@ function ReceiptDetail({ receipt }) {
 
         <CustomerCard receipt={receipt} />
         <LineItemsCard receipt={receipt} />
-        <TotalsCard receipt={receipt} />
+        <TotalsCard receipt={receipt} profile={profile} />
       </div>
 
       <div
@@ -1495,13 +1495,23 @@ function LineItemsCard({ receipt }) {
   )
 }
 
-function TotalsCard({ receipt }) {
+function TotalsCard({ receipt, profile }) {
+  const role = String(profile?.role || '').toLowerCase()
+  const isClient = role === 'fleet_client' || role === 'fleet_client_manager'
+  const markup = receipt.brokerMarkup
   return (
     <div className="bg-white rounded-2xl border overflow-hidden">
       <div className="bg-gray-50 border-b px-4 py-2.5 text-[11px] uppercase tracking-widest font-bold text-gray-500">
         Totals
       </div>
       <div className="p-4 space-y-2 text-sm">
+        {!isClient && markup?.percent > 0 && (
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className="inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold">
+              {markup.percent}% Broker Markup applied
+            </span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <span className="text-gray-500">Labor</span>
           <span className="font-bold text-gray-900">{formatMoney(receipt.laborTotal)}</span>
