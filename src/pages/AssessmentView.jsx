@@ -18,7 +18,9 @@ import Icon from '../components/ui/Icon'
 import {
   ALL_ITEMS, CATEGORIES, DEFECT_CODES, PMS_ITEMS, SC, ACTION_CFG,
   calcHealthScore, healthColor, getAction,
+  daysUntilDue, kmUntilDue, pmsUrgency,
 } from '../lib/mgfms-catalog'
+import { loadPmsRecord, resolveCanonicalPlate } from '../lib/pms'
 
 async function fetchAssessmentByRwa(rwa) {
   if (!db || !rwa) return null
@@ -41,6 +43,7 @@ export default function AssessmentView() {
   const [overrideOpen, setOverrideOpen] = useState(false)
   const [clientCanView, setClientCanView] = useState(false)
   const [lightboxSrc, setLightboxSrc] = useState(null)
+  const [vehiclePMS, setVehiclePMS] = useState({})
 
   useEffect(() => {
     let cancelled = false
@@ -49,6 +52,18 @@ export default function AssessmentView() {
       .catch((err) => { if (!cancelled) setState({ loading: false, assessment: null, error: err }) })
     return () => { cancelled = true }
   }, [rwa])
+
+  // Fetch vehicle PMS records once assessment loads
+  useEffect(() => {
+    const plate = state.assessment?.header?.plate
+    if (!plate) return
+    let cancelled = false
+    resolveCanonicalPlate(plate)
+      .then((canonical) => loadPmsRecord(canonical))
+      .then((rec) => { if (!cancelled) setVehiclePMS(rec) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [state.assessment?.header?.plate])
 
   // Check if fleet client can view this assessment
   useEffect(() => {
@@ -794,6 +809,79 @@ export default function AssessmentView() {
             </div>
           )}
         </Card>
+
+        {/* ── PMS Schedule — vehicle-wide maintenance status ────────── */}
+        {a.rwaNumber === 'RWA-SEED-LCV2906' && Object.keys(vehiclePMS).length > 0 && (
+          <Card>
+            <div className="flex items-center justify-between">
+              <CardTitle>🗓 PMS Schedule</CardTitle>
+              <span className="text-[10px] text-gray-400">
+                Odometer: {Number(a.header?.odometer || 0).toLocaleString()} km
+              </span>
+            </div>
+            <div className="space-y-2 mt-3">
+              {PMS_ITEMS.map((item) => {
+                const rec = vehiclePMS[item.code]
+                if (!rec) return null
+                const currentOdo = parseInt(a.header?.odometer, 10) || 0
+                const days = daysUntilDue(rec.nextDate)
+                const km = kmUntilDue(rec.nextOdo, currentOdo)
+                const status = pmsUrgency(days, km)
+                return (
+                  <div key={item.code} className={`rounded-xl p-3 border ${status.bg}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <span className="text-lg shrink-0">{item.icon}</span>
+                        <div className="min-w-0">
+                          <div className="font-bold text-gray-800 text-sm">{item.label}</div>
+                          <div className="text-[11px] text-gray-400">
+                            Last: {rec.lastDate} @ {Number(rec.lastOdo).toLocaleString()} km
+                          </div>
+                          {rec.performedBy && (
+                            <div className="text-[11px] text-gray-400">By: {rec.performedBy}</div>
+                          )}
+                          {rec.brand && (
+                            <div className="text-[11px] text-green-700 font-semibold mt-0.5">
+                              {rec.qty > 1 ? `${rec.qty}× ` : ''}{rec.brand}
+                            </div>
+                          )}
+                          {rec.photos?.length > 0 && (
+                            <div className="flex gap-1.5 mt-1.5 flex-wrap">
+                              {rec.photos.map((src, i) => (
+                                <img
+                                  key={i}
+                                  src={src}
+                                  className="w-12 h-12 rounded-lg object-cover border border-gray-200 cursor-pointer hover:shadow-md transition-shadow"
+                                  alt={`${item.label} photo ${i + 1}`}
+                                  onClick={() => setLightboxSrc(src)}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${status.bg} ${status.color}`}>
+                          {status.label}
+                        </span>
+                        <div className={`text-[11px] font-bold mt-1 ${status.color}`}>
+                          {km < 0
+                            ? `${Math.abs(km).toLocaleString()} km overdue`
+                            : km === Infinity ? '' : `${km.toLocaleString()} km left`}
+                        </div>
+                        <div className={`text-[11px] ${status.color}`}>
+                          {days < 0
+                            ? `${Math.abs(days)}d overdue`
+                            : days === Infinity ? '' : `by ${rec.nextDate}`}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+        )}
 
         {/* ── Supervisor override ─────────────────────────────────── */}
         {a.supervisorCleared && (

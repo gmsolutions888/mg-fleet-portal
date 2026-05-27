@@ -294,3 +294,23 @@ export function healthColor(score) {
   if (score >= 50) return { text: 'text-amber-700', bg: 'bg-amber-100', bar: 'bg-amber-500' }
   return { text: 'text-red-700', bg: 'bg-red-100', bar: 'bg-red-500' }
 }
+
+// PMS urgency helpers — ported from mg-fms App.jsx:103
+export function daysUntilDue(nextDate) {
+  if (!nextDate) return Infinity
+  const d = new Date(nextDate)
+  if (isNaN(d)) return Infinity
+  return Math.ceil((d - new Date()) / 86400000)
+}
+
+export function kmUntilDue(nextOdo, currentOdo) {
+  if (nextOdo == null) return Infinity
+  return nextOdo - (parseInt(currentOdo, 10) || 0)
+}
+
+export function pmsUrgency(daysLeft, kmLeft) {
+  if (daysLeft < 0 || kmLeft < 0) return { color: 'text-red-700', bg: 'bg-red-100', label: 'Overdue' }
+  if (daysLeft <= 7 || kmLeft <= 500) return { color: 'text-red-700', bg: 'bg-red-50', label: 'Due Soon' }
+  if (daysLeft <= 30 || kmLeft <= 1500) return { color: 'text-amber-700', bg: 'bg-amber-50', label: 'Upcoming' }
+  return { color: 'text-green-700', bg: 'bg-green-50', label: 'On Track' }
+}
