@@ -51,7 +51,7 @@ export default function Home() {
   const role = String(profile?.role || '').toLowerCase().trim()
   const canSwitchBranch = CROSS_BRANCH_ROLES.has(role)
   const userBranch = (profile?.branch || '').toUpperCase()
-  const [selectedBranch, setSelectedBranch] = useState(userBranch || BRANCHES[0])
+  const [selectedBranch, setSelectedBranch] = useState('ALL')
   const [showBranchPicker, setShowBranchPicker] = useState(false)
   const branch = canSwitchBranch ? selectedBranch : (userBranch || BRANCHES[0])
   const [view, setView] = useState('card')
@@ -89,11 +89,15 @@ export default function Home() {
     if (isWarrior && myName) {
       filtered = enriched.filter((a) => (a.mechanic || '').toLowerCase().trim() === myName)
     } else {
-      // Filter by selected branch
-      filtered = enriched.filter((a) => {
-        const ab = (a.branch || '').toUpperCase()
-        return ab === branch || !ab
-      })
+      // Filter by selected branch (skip when "ALL")
+      if (branch !== 'ALL') {
+        filtered = enriched.filter((a) => {
+          const ab = (a.branch || '').toUpperCase()
+          return ab === branch || !ab
+        })
+      } else {
+        filtered = enriched
+      }
     }
     // Filter completed — only show completions from today
     const todayStr = new Date().toISOString().slice(0, 10)
@@ -156,12 +160,12 @@ export default function Home() {
                 onClick={() => setShowBranchPicker(!showBranchPicker)}
                 className="flex items-center gap-2 hover:opacity-80"
               >
-                <span>{branch}</span>
+                <span>{branch === 'ALL' ? 'All Branches' : branch}</span>
                 <span className="text-white/60 text-lg">⋯</span>
               </button>
               {showBranchPicker && (
                 <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-2xl border z-50 min-w-[200px] overflow-hidden">
-                  {BRANCHES.map((b) => (
+                  {['ALL', ...BRANCHES].map((b) => (
                     <button
                       key={b}
                       onClick={() => { setSelectedBranch(b); setShowBranchPicker(false) }}
@@ -169,7 +173,7 @@ export default function Home() {
                         b === branch ? 'bg-brand/10 text-brand font-bold' : 'text-gray-800'
                       }`}
                     >
-                      {b}
+                      {b === 'ALL' ? 'All Branches' : b}
                     </button>
                   ))}
                 </div>
@@ -382,8 +386,14 @@ function AppointmentCard({ appt }) {
       <div className="text-[10px] text-gray-500 truncate">
         {(appt.brandModel || '').replace('Toyota - ', '')} {appt.yearModel}
       </div>
-      {appt.scheduledAt && (
+      {appt.branch && (
         <div className="mt-1.5 flex items-center gap-1 text-[10px] text-gray-600">
+          <Icon name="branch" className="w-3 h-3 text-gray-500" />
+          <span className="uppercase truncate">{appt.branch}</span>
+        </div>
+      )}
+      {appt.scheduledAt && (
+        <div className="flex items-center gap-1 text-[10px] text-gray-600">
           <Icon name="calendar" className="w-3 h-3 text-sky-600" />
           {formatDateTime(appt.scheduledAt)}
         </div>

@@ -419,6 +419,30 @@ export default function FixUser() {
     }
   }
 
+  const alignEdRole = async () => {
+    setStatus('Aligning edejercito@gmail.com to fleet manager role...')
+    try {
+      const { getDocs, query, where, collection: col, updateDoc: updDoc, doc: docRef } = await import('firebase/firestore')
+      // Find fleet.mgr@test.com to copy its role fields
+      const srcSnap = await getDocs(query(col(db, 'users'), where('email', '==', 'fleet.mgr@test.com')))
+      if (srcSnap.empty) { setStatus('Error: fleet.mgr@test.com not found'); return }
+      const src = srcSnap.docs[0].data()
+      // Find edejercito@gmail.com
+      const tgtSnap = await getDocs(query(col(db, 'users'), where('email', '==', 'edejercito@gmail.com')))
+      if (tgtSnap.empty) { setStatus('Error: edejercito@gmail.com not found'); return }
+      const tgtId = tgtSnap.docs[0].id
+      await updDoc(docRef(db, 'users', tgtId), {
+        role: src.role,
+        branch: src.branch || null,
+        is_admin: src.is_admin || false,
+        company_id: src.company_id || null,
+      })
+      setStatus(`Done! edejercito@gmail.com updated: role=${src.role}, branch=${src.branch || 'null'}, is_admin=${src.is_admin}`)
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)))
+    }
+  }
+
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>Fix User</h1>
@@ -486,6 +510,12 @@ export default function FixUser() {
           style={{ background: '#047857', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
         >
           Seed 14 Fleet Vehicles
+        </button>
+        <button
+          onClick={alignEdRole}
+          style={{ background: '#0369a1', color: 'white', padding: '10px 24px', borderRadius: 8, fontWeight: 'bold', cursor: 'pointer', border: 'none' }}
+        >
+          Align edejercito to Fleet Manager
         </button>
       </div>
     </div>

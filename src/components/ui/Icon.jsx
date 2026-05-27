@@ -22,6 +22,7 @@ const PATHS = {
   home: 'M12 3l-9 9h3v8h5v-5h2v5h5v-8h3l-9-9z',
   grid: 'M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z',
   receipt: 'M19 3l-1.5 1.5L16 3l-1.5 1.5L13 3l-1.5 1.5L10 3 8.5 4.5 7 3 5.5 4.5 4 3v18l1.5-1.5L7 21l1.5-1.5L10 21l1.5-1.5L13 21l1.5-1.5L16 21l1.5-1.5L19 21V3zm-4 14H7v-2h8v2zm2-4H7v-2h10v2zm0-4H7V7h10v2z',
+  branch: 'M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z',
 }
 
 export default function Icon({ name, className = 'w-4 h-4', fill = 'currentColor' }) {
