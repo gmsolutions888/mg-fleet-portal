@@ -344,29 +344,8 @@ export async function generateClientInvoice(branchInvoiceId, { companyTerms, byP
     company: bi.company,
   })
 
-  // Tag the vehicle's appointment as COMPLETED
-  if (bi.plateNo) {
-    try {
-      const apptSnap = await getDocs(query(
-        collection(db, 'appointments'),
-        where('plateNo', '==', bi.plateNo),
-      ))
-      const activeStatuses = new Set(['ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
-      for (const d of apptSnap.docs) {
-        if (activeStatuses.has(d.data().status)) {
-          await updateDoc(doc(db, 'appointments', d.id), {
-            status: 'COMPLETED',
-            note: `Service completed — invoice ${code} forwarded to fleet`,
-            updatedAt: serverTimestamp(),
-            updatedBy: uid,
-          })
-          break
-        }
-      }
-    } catch (err) {
-      console.warn('[clientInvoices] failed to complete appointment:', err?.message || err)
-    }
-  }
+  // Auto-complete removed — appointment status is managed manually by staff
+  // via the Home page status buttons. Invoices are tied to bookings, not plates.
 
   return { id: ref.id, ...payload, issuedAt: nowIso }
 }

@@ -105,24 +105,9 @@ export default function Home() {
       return updatedAt.toISOString().slice(0, 10) === todayStr
     })
 
-    // Deduplicate by plate — keep the most active appointment per plate.
-    // Priority: active statuses first, then most recently updated.
-    const ACTIVE = new Set(['PENDING_BRANCH_APPROVAL', 'BOOKED', 'CONFIRMED', 'TENTATIVE', 'ARRIVED', 'DIAGNOSED', 'ONGOING', 'PENDING'])
-    const byPlate = new Map()
-    for (const a of filtered) {
-      const plate = (a.plateNo || '').toUpperCase()
-      const existing = byPlate.get(plate)
-      if (!existing) { byPlate.set(plate, a); continue }
-      const aActive = ACTIVE.has(a.status)
-      const eActive = ACTIVE.has(existing.status)
-      if (aActive && !eActive) { byPlate.set(plate, a); continue }
-      if (!aActive && eActive) continue
-      // Both active or both inactive — keep more recent
-      const aTime = a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0
-      const eTime = existing.updatedAt?.toMillis?.() || existing.createdAt?.toMillis?.() || 0
-      if (aTime > eTime) byPlate.set(plate, a)
-    }
-    return [...byPlate.values()]
+    // No dedup — a vehicle can have multiple bookings (e.g. repeat visits).
+    // Each appointment is shown individually.
+    return filtered
   }, [raw, vehicles, isWarrior, myName, branch])
 
   // CONFIRMED is what fleet bookings flip to after branch approval; it's
@@ -321,47 +306,58 @@ function AppointmentCard({ appt }) {
   const [statusError, setStatusError] = useState(null)
 
   // Check if fix has been made (re-assessment with replaced items exists)
+  // fixStatus: check if the current booking's assessment has replaced items
+  // (fix done, waiting for invoice) or if a branch invoice was generated for
+  // this booking. Invoices are tied to bookings, not plates — so we trace
+  // appointment → rwaNumber → quotation → invoice.
   const [fixStatus, setFixStatus] = useState(null) // null=loading, 'none', 'fixed', 'invoiced'
   useEffect(() => {
-    if (!appt.plateNo) { setFixStatus('none'); return }
+    if (!appt.plateNo || !appt.id) { setFixStatus('none'); return }
     let cancelled = false
     ;(async () => {
       try {
-        // Check if invoice already created
         const { getDocs, query, where, collection } = await import('firebase/firestore')
         const { db } = await import('../lib/firebase')
-        const invSnap = await getDocs(query(collection(db, 'branchInvoices'), where('plateNo', '==', appt.plateNo)))
-        const activeInvoice = invSnap.docs.find((d) => d.data().status !== 'VOID')
-        if (activeInvoice) {
-          // Auto-complete appointment if still active
-          const activeStatuses = new Set(['ARRIVED', 'ONGOING', 'DIAGNOSED', 'PENDING'])
-          if (activeStatuses.has(appt.status) && appt.id) {
-            try {
-              const { doc: docRef, updateDoc: updDoc, serverTimestamp: srvTs } = await import('firebase/firestore')
-              await updDoc(docRef(db, 'appointments', appt.id), {
-                status: 'COMPLETED',
-                note: `Service completed — invoice ${activeInvoice.data().code || ''} issued`,
-                updatedAt: srvTs(),
-              })
-            } catch (e) { console.warn('[home] auto-complete failed:', e) }
+
+        // Check if this booking's quotation has a branch invoice
+        if (appt.rwaNumber) {
+          // Find quotation linked to this appointment's assessment
+          const qSnap = await getDocs(query(
+            collection(db, 'serviceReceipts'),
+            where('kind', '==', 'quotation'),
+            where('plateNo', '==', appt.plateNo),
+          ))
+          for (const qd of qSnap.docs) {
+            const q = qd.data()
+            // Match quotation to this appointment by checking appointmentId or rwaNumber
+            if (q.appointmentId !== appt.id && q.fromAssessment !== appt.rwaNumber) continue
+            // Check if a branch invoice exists for this quotation
+            const invSnap = await getDocs(query(
+              collection(db, 'branchInvoices'),
+              where('quotationCode', '==', q.code),
+            ))
+            const activeInv = invSnap.docs.find((d) => d.data().status !== 'VOID')
+            if (activeInv) {
+              if (!cancelled) setFixStatus('invoiced')
+              return
+            }
           }
-          if (!cancelled) setFixStatus('invoiced')
-          return
         }
 
-        // Check if re-assessment with fixes exists
-        const assessSnap = await getDocs(query(collection(db, 'assessments')))
-        const hasFixed = assessSnap.docs.some((d) => {
-          const data = d.data()
-          const plate = String(data?.header?.plate || '').toUpperCase().replace(/\s+/g, '')
-          if (plate !== appt.plateNo.toUpperCase().replace(/\s+/g, '')) return false
-          return Object.values(data.itemResults || {}).some((r) => r.resultCode === 'replaced')
-        })
-        if (!cancelled) setFixStatus(hasFixed ? 'fixed' : 'none')
+        // Check if this appointment's assessment has replaced items (fix done)
+        if (appt.assessmentId || appt.rwaNumber) {
+          const assessSnap = await getDocs(query(collection(db, 'assessments'), where('appointmentId', '==', appt.id)))
+          const hasFixed = assessSnap.docs.some((d) =>
+            Object.values(d.data().itemResults || {}).some((r) => r.resultCode === 'replaced')
+          )
+          if (!cancelled) setFixStatus(hasFixed ? 'fixed' : 'none')
+        } else {
+          if (!cancelled) setFixStatus('none')
+        }
       } catch { if (!cancelled) setFixStatus('none') }
     })()
     return () => { cancelled = true }
-  }, [appt.plateNo, appt.status])
+  }, [appt.id, appt.plateNo, appt.rwaNumber, appt.assessmentId, appt.status])
 
   const hasMechanic = appt.mechanic && appt.mechanic !== 'Not yet assigned'
   const assessHref = hasMechanic
@@ -451,7 +447,19 @@ function AppointmentCard({ appt }) {
           Invoice created
         </div>
       )}
-      {showAssess && appt.status !== 'COMPLETED' && appt.status !== 'DIAGNOSED' && appt.status !== 'ONGOING' && appt.status !== 'PENDING' && (
+      {/* Mark Arrived — visible to all staff when vehicle is BOOKED/CONFIRMED/TENTATIVE */}
+      {!isBranchUser && (appt.status === 'BOOKED' || appt.status === 'CONFIRMED' || appt.status === 'TENTATIVE') && (
+        <button
+          type="button"
+          disabled={statusBusy}
+          onClick={(e) => moveStatus('ARRIVED', 'Vehicle arrived', e)}
+          className="block mt-2 w-full bg-sky-100 text-sky-700 hover:bg-sky-200 text-[10px] font-bold rounded-lg px-2 py-1.5 text-center disabled:opacity-40"
+        >
+          {statusBusy ? '...' : 'Mark Arrived'}
+        </button>
+      )}
+      {/* ASSESS — show on ARRIVED for all staff */}
+      {appt.status === 'ARRIVED' && (
         <button
           type="button"
           onClick={(e) => {

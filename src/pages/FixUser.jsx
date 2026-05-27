@@ -422,7 +422,7 @@ export default function FixUser() {
   return (
     <div style={{ padding: 40, fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 16 }}>Fix User</h1>
-      <p style={{ marginBottom: 8 }}>{status}</p>
+      <p style={{ marginBottom: 8, whiteSpace: 'pre-wrap' }}>{status}</p>
       <p style={{ marginBottom: 16, fontSize: 12, color: '#666' }}>
         Logged in as: {user?.email || 'NOT LOGGED IN — go to /login first'}
       </p>
