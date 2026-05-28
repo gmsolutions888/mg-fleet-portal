@@ -4,7 +4,7 @@
 // mode and real pages read from Firestore.
 
 // Real mg-fms branches (src/App.jsx:9 in mg-fms-app/)
-export const BRANCHES = ['MGCAVITE', 'MGQUEZON CITY', 'MGPAMPANGA', 'MGDAVAO', 'MGPALAWAN']
+export const BRANCHES = ['MGCAVITE', 'MGQUEZON CITY', 'MGPAMPANGA', 'MGDAVAO', 'MGPALAWAN', 'MGBATANGAS']
 
 // Real mg-fms fleet clients (src/App.jsx:10 in mg-fms-app/). The `name` field
 // must EXACTLY equal mg-fms's `header.client` string (including the em-dash in

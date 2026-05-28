@@ -101,6 +101,11 @@ const BRANCHES = {
     tradeName: 'MG Palawan',
     address1:  'TODO — Palawan address',
   },
+  'MGBATANGAS': {
+    ...BRANCH_DEFAULTS,
+    tradeName: 'MG Batangas',
+    address1:  'TODO — Batangas address',
+  },
   'ALL BRANCH': {
     ...BRANCH_DEFAULTS,
     tradeName: 'Master Garage — All Branch',
