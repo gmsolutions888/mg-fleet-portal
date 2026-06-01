@@ -119,6 +119,16 @@ export default function Sidebar() {
     return unsub
   }, [profile?.is_admin])
 
+  // Live count of landing contact-us messages for the badge
+  const [contactCount, setContactCount] = useState(0)
+  useEffect(() => {
+    if (!profile?.is_admin || !db) return
+    const unsub = onSnapshot(collection(db, 'landing_contacts'), (snap) => {
+      setContactCount(snap.size)
+    })
+    return unsub
+  }, [profile?.is_admin])
+
   // Live count of quotations needing action for the badge
   const [quotationNeedsAction, setQuotationNeedsAction] = useState(0)
   useEffect(() => {
@@ -195,6 +205,7 @@ export default function Sidebar() {
       </Section>
       {profile?.is_admin && <Section title="Sign-ups">
         <Item to="/admin/fleet-signups" label="Fleet Sign-ups" badge={signupCount} />
+        <Item to="/admin/fleet-contact-us" label="Fleet Contact-us" badge={contactCount} />
       </Section>}
       <Section title="Core Operations">
         {canBookingRequests(role) && <Item to="/booking-requests" label="Booking Requests" badge={pendingBookings} />}
