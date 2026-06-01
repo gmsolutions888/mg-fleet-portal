@@ -150,7 +150,7 @@ export default function Login() {
         )}
 
         <div className="text-center text-gray-500 text-xs mt-4">
-          © GM Solutions Inc {new Date().getFullYear()}
+          © GM Solutions Inc {new Date().getFullYear()} · v1.0.0
         </div>
       </div>
     </div>

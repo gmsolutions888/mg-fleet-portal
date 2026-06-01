@@ -22,7 +22,7 @@ export default function PortalLayout() {
           <Outlet />
         </main>
         <footer className="hidden md:block text-center text-[11px] text-gray-500 py-2 border-t bg-white print:hidden">
-          © GM Solutions Inc {new Date().getFullYear()}
+          © GM Solutions Inc {new Date().getFullYear()} · v1.0.0
         </footer>
       </div>
 
